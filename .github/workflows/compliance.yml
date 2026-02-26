@@ -48,7 +48,7 @@ jobs:
       - name: Upload dependency assemblies
         uses: actions/upload-artifact@v4
         with:
-          name: deps-assemblies
+          name: deps-assemblies-${{ github.run_attempt }}
           path: deps-assemblies/**
           if-no-files-found: warn
 
@@ -65,7 +65,7 @@ jobs:
       - name: Download dependency assemblies
         uses: actions/download-artifact@v4
         with:
-          name: deps-assemblies
+          name: deps-assemblies-${{ github.run_attempt }}
           path: deps-assemblies
 
       - name: Stage dependency assemblies → ProgramData\BHoM\Assemblies
@@ -113,7 +113,7 @@ jobs:
       - name: Upload Test_Toolkit assemblies
         uses: actions/upload-artifact@v4
         with:
-          name: test-toolkit-assemblies
+          name: test-toolkit-assemblies-${{ github.run_attempt }}
           path: test-toolkit-assemblies/**
           if-no-files-found: error
 
@@ -140,13 +140,13 @@ jobs:
       - name: Download dependencies
         uses: actions/download-artifact@v4
         with:
-          name: deps-assemblies
+          name: deps-assemblies-${{ github.run_attempt }}
           path: deps-assemblies
 
       - name: Download Test_Toolkit assemblies
         uses: actions/download-artifact@v4
         with:
-          name: test-toolkit-assemblies
+          name: test-toolkit-assemblies-${{ github.run_attempt }}
           path: toolkit
 
       - name: Stage all assemblies → ProgramData\BHoM\Assemblies
