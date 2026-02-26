@@ -89,24 +89,63 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Restore Test_Toolkit
-        working-directory: test_toolkit
-        run: nuget restore Test_Toolkit.sln
-
-      - name: Build CodeComplianceTest_Engine
-        run: >
-          msbuild
-          test_toolkit/CodeComplianceTest_Engine/CodeComplianceTest_Engine.csproj
-          /p:Configuration=${{ inputs.configuration }}
-          /m /nologo
-
-      - name: Collect Test_Toolkit assemblies
+      # Try to restore the solution if it exists; otherwise log solutions to aid diagnostics
+      - name: Restore Test_Toolkit (best-effort)
         shell: pwsh
         run: |
-          $out = "test-toolkit-assemblies"
+          $root = "${{ github.workspace }}/test_toolkit"
+          $sln = Get-ChildItem -Recurse $root -Filter "Test_Toolkit.sln" | Select-Object -First 1
+          if ($sln) {
+            Write-Host "Restoring solution: $($sln.FullName)"
+            nuget restore $sln.FullName
+          } else {
+            Write-Host "Test_Toolkit.sln not found; available solutions under test_toolkit:"
+            Get-ChildItem -Recurse $root -Filter *.sln | ForEach-Object { " - $($_.FullName)" }
+          }
+
+      # Build CodeComplianceTest_Engine by discovering its exact csproj path
+      - name: Build CodeComplianceTest_Engine (dynamic)
+        shell: pwsh
+        run: |
+          $proj = Get-ChildItem -Recurse "${{ github.workspace }}/test_toolkit" -Filter "CodeComplianceTest_Engine.csproj" | Select-Object -First 1
+          if (-not $proj) {
+            Write-Host "Could not find CodeComplianceTest_Engine.csproj under test_toolkit. Projects present:"
+            Get-ChildItem -Recurse "${{ github.workspace }}/test_toolkit" -Filter *.csproj | ForEach-Object { " - $($_.FullName)" }
+            throw "CodeComplianceTest_Engine.csproj not found."
+          }
+
+          Write-Host "Building project: $($proj.FullName)"
+          msbuild $proj.FullName /p:Configuration=${{ inputs.configuration }} /m /nologo /verbosity:minimal
+
+      # Discover a bin/<Configuration> folder irrespective of TFMs (e.g., net48) or platform (x64)
+      - name: Collect Test_Toolkit assemblies (dynamic bin path)
+        shell: pwsh
+        run: |
+          $proj = Get-ChildItem -Recurse "${{ github.workspace }}/test_toolkit" -Filter "CodeComplianceTest_Engine.csproj" | Select-Object -First 1
+          if (-not $proj) { throw "CodeComplianceTest_Engine.csproj not found in collection step." }
+
+          # Find bin folders that contain the chosen configuration
+          $binCandidates = Get-ChildItem -Recurse $proj.Directory.FullName -Directory -Filter "bin" |
+            ForEach-Object { Get-ChildItem -Recurse $_.FullName -Directory -Filter "${{ inputs.configuration }}" } |
+            Select-Object -ExpandProperty FullName -Unique
+
+          if (-not $binCandidates) {
+            Write-Host "No 'bin/${{ inputs.configuration }}' folder found under: $($proj.Directory.FullName)"
+            Write-Host "Listing all 'bin' folders under project:"
+            Get-ChildItem -Recurse $proj.Directory.FullName -Directory -Filter "bin" | ForEach-Object { " - $($_.FullName)" }
+            throw "Build did not produce an expected bin path."
+          }
+
+          # Prefer the shallowest match (closest to the project directory)
+          $bin = ($binCandidates | Sort-Object { $_.Length })[0]
+          Write-Host "Using bin path: $bin"
+
+          $out = "${{ github.workspace }}/test-toolkit-assemblies"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Copy-Item "test_toolkit/CodeComplianceTest_Engine/bin/${{ inputs.configuration }}/*.dll" $out -Force
-      
+
+          # Copy DLLs from the discovered bin folder (including nested TFMs)
+          Get-ChildItem -Recurse $bin -Filter *.dll | Copy-Item -Destination $out -Force
+
           Write-Host "Toolkit assemblies:"
           Get-ChildItem $out -Filter *.dll | ForEach-Object { " - $($_.Name)" }
 
@@ -114,7 +153,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-toolkit-assemblies-${{ github.run_attempt }}
-          path: test-toolkit-assemblies/**
+          path: ${{ github.workspace }}/test-toolkit-assemblies/**
           if-no-files-found: error
 
 
