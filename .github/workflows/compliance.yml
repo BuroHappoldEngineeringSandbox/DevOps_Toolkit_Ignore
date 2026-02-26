@@ -24,10 +24,12 @@ on:
         default: "compliance.sarif"
 
       devops_toolkit_repo:
+        description: "Repo containing ComplianceRunner"
         type: string
         default: "BuroHappoldEngineeringSandbox/DevOps_Toolkit"
 
       devops_toolkit_ref:
+        description: "Branch/Ref of ComplianceRunner"
         type: string
         default: "main"
 
@@ -36,8 +38,9 @@ permissions:
   security-events: write
 
 jobs:
+
   # ---------------------------------------------------------
-  # Job 0: Build Test_Toolkit and publish its assemblies
+  # Job 0: Build Test_Toolkit → extract CodeComplianceTest_Engine.dll
   # ---------------------------------------------------------
   build_test_toolkit:
     name: Build Test_Toolkit
@@ -51,7 +54,7 @@ jobs:
           ref: develop
           path: test_toolkit
 
-      - name: Setup .NET
+      - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ inputs.dotnet_version }}
@@ -63,19 +66,20 @@ jobs:
           dotnet restore --nologo
           dotnet build -c ${{ inputs.configuration }} --nologo
 
-      - name: Publish toolkit DLL
-        id: finddll
+      - name: Locate CodeComplianceTest_Engine.dll
+        id: dll
         shell: pwsh
         run: |
           $dll = Get-ChildItem -Recurse "test_toolkit/CodeComplianceTest_Engine/bin/${{ inputs.configuration }}" `
-            -Filter "CodeComplianceTest_Engine.dll" | Select-Object -First 1 -ExpandProperty FullName
-
+            -Filter "CodeComplianceTest_Engine.dll" |
+            Select-Object -First 1 -ExpandProperty FullName
           echo "dll=$dll" >> $env:GITHUB_OUTPUT
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload Test_Toolkit DLL
+        uses: actions/upload-artifact@v4
         with:
           name: test-toolkit-dll
-          path: ${{ steps.finddll.outputs.dll }}
+          path: ${{ steps.dll.outputs.dll }}
 
   # ---------------------------------------------------------
   # Job 1: Run Compliance
@@ -83,13 +87,11 @@ jobs:
   compliance:
     name: Compliance Checks
     runs-on: windows-latest
-    needs: [build_test_toolkit]
-    permissions:
-      contents: read
-      security-events: write
+    needs: build_test_toolkit
 
     steps:
-      - name: Checkout target repository
+
+      - name: Checkout target repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -99,7 +101,7 @@ jobs:
         with:
           dotnet-version: ${{ inputs.dotnet_version }}
 
-      - name: Download Test_Toolkit dll
+      - name: Download toolkit DLL
         uses: actions/download-artifact@v4
         with:
           name: test-toolkit-dll
@@ -108,11 +110,10 @@ jobs:
       - name: Shadow ProgramData\BHoM\Assemblies
         shell: pwsh
         run: |
-          $toolkitDir = Resolve-Path _toolkit
           $target = Join-Path $env:ProgramData "BHoM\Assemblies"
           New-Item -ItemType Directory -Force -Path $target | Out-Null
-          Copy-Item "$toolkitDir\*.dll" $target -Force
-          Write-Host "Copied Test_Toolkit assemblies to $target"
+          Copy-Item "_toolkit\*.dll" $target -Force
+          Write-Host "Shadowed ProgramData → $target"
 
       - name: Checkout DevOps_Toolkit
         uses: actions/checkout@v4
@@ -128,8 +129,8 @@ jobs:
           dotnet restore --nologo
           dotnet build -c ${{ inputs.configuration }} --nologo
 
-      # ------- Changed Files Mode for PRs Only -------
-      - name: Detect changed .cs files
+      # -------- PR Mode: Only changed .cs files --------
+      - name: Detect changed C# files
         id: changes
         if: ${{ github.event_name == 'pull_request' }}
         shell: pwsh
@@ -138,71 +139,69 @@ jobs:
           git diff --name-only $base...HEAD -- '*.cs' | Set-Content changed_files.txt
           $count = (Get-Content changed_files.txt | Measure-Object -Line).Lines
           echo "count=$count" >> $env:GITHUB_OUTPUT
-          Write-Host "Changed CS files count: $count"
 
-      - name: Run compliance for changed files (PR only)
+      - name: Run compliance for changed files
         if: ${{ github.event_name == 'pull_request' && steps.changes.outputs.count != '0' }}
         shell: pwsh
         run: |
           $proj = "_devops_toolkit/src/Compliance/ComplianceRunner/ComplianceRunner.csproj"
-          $sarifOut = "${{ inputs.sarif_name }}"
-          $tmp = "sarif_parts"
-          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
-          $ruleFlags = @()
-          foreach ($rule in @("${{ inputs.rules }}" -split "`n")) {
-            if ($rule.Trim() -ne "") { $ruleFlags += @("--rule", $rule.Trim()) }
+          $rules = @()
+          foreach ($r in @("${{ inputs.rules }}" -split "`n")) {
+            if ($r.Trim() -ne "") { $rules += @("--rule", $r.Trim()) }
           }
+
+          $temp = "sarif_parts"
+          New-Item -ItemType Directory -Force -Path $temp | Out-Null
 
           $i = 0
           foreach ($file in Get-Content changed_files.txt) {
-            $file = $file.Trim()
-            if ($file) {
-              $part = Join-Path $tmp ("part_$i.sarif")
-              dotnet run -c ${{ inputs.configuration }} --project $proj -- `
-                "$file" @ruleFlags --sarif "$part"
-              $i++
-            }
+            if ($file.Trim() -eq "") { continue }
+            $out = Join-Path $temp ("part_$i.sarif")
+            dotnet run -c ${{ inputs.configuration }} --project $proj -- `
+              "$file" @rules --sarif "$out"
+            $i++
           }
 
-          # Merge SARIF output
-          $parts = Get-ChildItem $tmp -Filter "*.sarif"
-          if ($parts.Count -eq 0) {
-            Write-Host "No SARIF produced"
-          } else {
-            $combined = @{
-              version = "2.1.0"
-              schema  = "https://json.schemastore.org/sarif-2.1.0.json"
-              runs = @(@{
-                tool    = @{ driver = @{ name = "BHoM Compliance Runner"; version = "1.0.0"; rules = @() } }
-                results = @()
-              })
-            }
-            foreach ($p in $parts) {
-              $obj = Get-Content $p.FullName -Raw | ConvertFrom-Json -Depth 100
-              $run = $obj.runs[0]
-              $combined.runs[0].results += $run.results
-              $combined.runs[0].tool.driver.rules += $run.tool.driver.rules
-            }
-            $combined.runs[0].tool.driver.rules =
-              ($combined.runs[0].tool.driver.rules | Group-Object id | ForEach-Object { $_.Group[0] })
-
-            $combined | ConvertTo-Json -Depth 100 | Out-File -FilePath $sarifOut -Encoding utf8
+          # merge SARIF parts
+          $parts = Get-ChildItem $temp -Filter "*.sarif"
+          $combined = @{
+            version = "2.1.0"
+            schema  = "https://json.schemastore.org/sarif-2.1.0.json"
+            runs    = @(@{
+              tool    = @{ driver = @{ name = "BHoM Compliance Runner"; version = "1.0.0"; rules = @() } }
+              results = @()
+            })
           }
 
-      # ------- Whole-repo scan (pushes, or no changed files) -------
+          foreach ($p in $parts) {
+            $j = Get-Content $p.FullName -Raw | ConvertFrom-Json -Depth 100
+            $run = $j.runs[0]
+            $combined.runs[0].results += $run.results
+            $combined.runs[0].tool.driver.rules += $run.tool.driver.rules
+          }
+
+          # dedupe rules
+          $combined.runs[0].tool.driver.rules =
+            ($combined.runs[0].tool.driver.rules | Group-Object id | ForEach-Object { $_.Group[0] })
+
+          $combined | ConvertTo-Json -Depth 100 |
+            Out-File -FilePath "${{ inputs.sarif_name }}" -Encoding utf8
+
+      # -------- Push Mode OR no changed files --------
       - name: Run compliance for entire repo
         if: ${{ github.event_name != 'pull_request' || steps.changes.outputs.count == '0' }}
         shell: pwsh
         run: |
           $proj = "_devops_toolkit/src/Compliance/ComplianceRunner/ComplianceRunner.csproj"
-          $target = "."
-          $ruleFlags = @()
-          foreach ($rule in @("${{ inputs.rules }}" -split "`n")) {
-            if ($rule.Trim() -ne "") { $ruleFlags += @("--rule", $rule.Trim()) }
+
+          $rules = @()
+          foreach ($r in @("${{ inputs.rules }}" -split "`n")) {
+            if ($r.Trim() -ne "") { $rules += @("--rule", $r.Trim()) }
           }
+
           dotnet run -c ${{ inputs.configuration }} --project $proj -- `
-            "$target" @ruleFlags --sarif "${{ inputs.sarif_name }}"
+            "." @rules --sarif "${{ inputs.sarif_name }}"
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
