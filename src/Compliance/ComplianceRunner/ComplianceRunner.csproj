@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.Common" Version="5.0.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<Reference Include="CodeComplianceTest_Engine">
+		<HintPath>$(ProgramData)\BHoM\Assemblies\CodeComplianceTest_Engine.dll</HintPath>
+		<Private>true</Private>
+		<SpecificVersion>false</SpecificVersion>
+	</Reference>
+  </ItemGroup>
+
+</Project>
