@@ -40,10 +40,7 @@ jobs:
       - name: Prepare BHoM dependencies
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/prepare-dependencies@main
         with:
-          dependencies: |
-            BHoM@develop
-            BHoM_Engine@develop
-            BHoM_Adapter@develop
+          dependencies: "BHoM@develop, BHoM_Engine@develop, BHoM_Adapter@develop"
           configuration: ${{ inputs.configuration }}
           default_org: BuroHappoldEngineeringSandbox
           token: ${{ github.token }}
