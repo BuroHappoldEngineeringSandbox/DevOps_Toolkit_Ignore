@@ -11,52 +11,156 @@ on:
         default: "Release"
       rules:
         type: string
-        default: ""        # multiline list of rules (optional)
+        default: ""        # optional: one rule per line
 
 permissions:
   contents: read
   security-events: write
 
 jobs:
-
   # ---------------------------------------------------------
-  # Job 0: Build Test_Toolkit (Sandbox public repo)
+  # Job 0: Build dependencies (BHoM, BHoM_Engine, BHoM_Adapter)
   # ---------------------------------------------------------
-  build_test_toolkit:
+  build_dependencies:
     runs-on: windows-latest
 
     steps:
+      - name: Checkout BHoM
+        uses: actions/checkout@v4
+        with:
+          repository: BuroHappoldEngineeringSandbox/BHoM
+          path: deps/BHoM
+          fetch-depth: 0
+
+      - name: Checkout BHoM_Engine
+        uses: actions/checkout@v4
+        with:
+          repository: BuroHappoldEngineeringSandbox/BHoM_Engine
+          path: deps/BHoM_Engine
+          fetch-depth: 0
+
+      - name: Checkout BHoM_Adapter
+        uses: actions/checkout@v4
+        with:
+          repository: BuroHappoldEngineeringSandbox/BHoM_Adapter
+          path: deps/BHoM_Adapter
+          fetch-depth: 0
+
+      # Classic .NET (packages.config) repos → NuGet.exe + MSBuild
+      - name: Setup NuGet (for packages.config restore)
+        uses: nuget/setup-nuget@v2
+
+      - name: Setup MSBuild (full .NET Framework)
+        uses: microsoft/setup-msbuild@v2
+
+      # ---- Restore & build each dependency (adjust solution paths if different) ----
+      - name: NuGet restore BHoM
+        working-directory: deps/BHoM
+        run: nuget restore *.sln
+
+      - name: Build BHoM
+        run: >
+          msbuild "deps\BHoM\*.sln"
+          /p:Configuration=${{ inputs.configuration }}
+          /m /nologo /verbosity:minimal
+
+      - name: NuGet restore BHoM_Engine
+        working-directory: deps/BHoM_Engine
+        run: nuget restore *.sln
+
+      - name: Build BHoM_Engine
+        run: >
+          msbuild "deps\BHoM_Engine\*.sln"
+          /p:Configuration=${{ inputs.configuration }}
+          /m /nologo /verbosity:minimal
+
+      - name: NuGet restore BHoM_Adapter
+        working-directory: deps/BHoM_Adapter
+        run: nuget restore *.sln
+
+      - name: Build BHoM_Adapter
+        run: >
+          msbuild "deps\BHoM_Adapter\*.sln"
+          /p:Configuration=${{ inputs.configuration }}
+          /m /nologo /verbosity:minimal
+
+      # ---- Collect all dependency DLLs into one folder artifact ----
+      - name: Gather dependency assemblies
+        shell: pwsh
+        run: |
+          $out = "deps-assemblies"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          # Collect DLLs from common bin paths (Release/Debug → we use the chosen configuration)
+          Get-ChildItem -Recurse -Path deps -Include *.dll |
+            Where-Object { $_.FullName -match "\\bin\\${{ inputs.configuration }}\\" } |
+            Copy-Item -Destination $out -Force
+
+          Write-Host "Collected assemblies:"
+          Get-ChildItem $out -Filter *.dll | ForEach-Object { Write-Host " - $($_.Name)" }
+
+      - name: Upload dependency assemblies
+        uses: actions/upload-artifact@v4
+        with:
+          name: deps-assemblies
+          path: deps-assemblies/**
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------
+  # Job 1: Build Test_Toolkit (after staging dependency DLLs)
+  # ---------------------------------------------------------
+  build_test_toolkit:
+    runs-on: windows-latest
+    needs: build_dependencies
+
+    steps:
+      - name: Download dependency assemblies
+        uses: actions/download-artifact@v4
+        with:
+          name: deps-assemblies
+          path: deps-assemblies
+        continue-on-error: false
+
+      - name: Stage dependency DLLs into ProgramData\BHoM\Assemblies
+        shell: pwsh
+        run: |
+          $target = "$env:ProgramData\BHoM\Assemblies"
+          New-Item -ItemType Directory -Force -Path $target | Out-Null
+          Copy-Item "deps-assemblies\*.dll" $target -Force
+          Write-Host "Staged dependency assemblies → $target"
+          Get-ChildItem $target -Filter *.dll | Select-Object -First 20 | % { " - " + $_.Name }
+
       - name: Checkout Test_Toolkit
         uses: actions/checkout@v4
         with:
           repository: BuroHappoldEngineeringSandbox/Test_Toolkit
-          ref: develop
+          ref: develop     # change if needed
           path: test_toolkit
-          fetch-depth: 0     # public repo → no token required
+          fetch-depth: 0
 
-      - name: Setup NuGet (for packages.config restore)
+      - name: Setup NuGet
         uses: nuget/setup-nuget@v2
 
-      - name: Setup MSBuild (for .NET Framework csproj)
+      - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: NuGet restore (solution)
+      - name: NuGet restore Test_Toolkit.sln
         working-directory: test_toolkit
         run: nuget restore Test_Toolkit.sln
 
-      - name: Build CodeComplianceTest_Engine
+      - name: Build CodeComplianceTest_Engine (Test_Toolkit)
         run: >
           msbuild
-          test_toolkit/CodeComplianceTest_Engine/CodeComplianceTest_Engine.csproj
-          /p:Configuration=Release
-          /nologo
+          test_toolkit\CodeComplianceTest_Engine\CodeComplianceTest_Engine.csproj
+          /p:Configuration=${{ inputs.configuration }}
+          /nologo /m /verbosity:minimal
 
       - name: Collect Toolkit DLLs
         shell: pwsh
         run: |
           $out = "toolkit-dlls"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Copy-Item "test_toolkit/CodeComplianceTest_Engine/bin/Release/*.dll" $out -Force
+          Copy-Item "test_toolkit/CodeComplianceTest_Engine/bin/${{ inputs.configuration }}/*.dll" $out -Force
 
       - name: Upload Toolkit assemblies
         uses: actions/upload-artifact@v4
@@ -65,9 +169,8 @@ jobs:
           path: toolkit-dlls/**
           if-no-files-found: error
 
-
   # ---------------------------------------------------------
-  # Job 1: Run ComplianceRunner using staged toolkit DLLs
+  # Job 2: Run Compliance using DevOps_Toolkit + staged DLLs
   # ---------------------------------------------------------
   compliance:
     runs-on: windows-latest
@@ -84,18 +187,27 @@ jobs:
         with:
           dotnet-version: ${{ inputs.dotnet_version }}
 
-      - name: Download Test_Toolkit DLLs
+      - name: Download dependency assemblies
+        uses: actions/download-artifact@v4
+        with:
+          name: deps-assemblies
+          path: deps-assemblies
+
+      - name: Download Test_Toolkit assemblies
         uses: actions/download-artifact@v4
         with:
           name: test-toolkit-assemblies
           path: _toolkit
 
-      - name: Stage DLLs into ProgramData\BHoM\Assemblies
+      - name: Stage ALL assemblies into ProgramData\BHoM\Assemblies
         shell: pwsh
         run: |
           $target = "$env:ProgramData\BHoM\Assemblies"
           New-Item -ItemType Directory -Force -Path $target | Out-Null
-          Copy-Item "_toolkit/*.dll" $target -Force
+          Copy-Item "deps-assemblies\*.dll" $target -Force -ErrorAction SilentlyContinue
+          Copy-Item "_toolkit\*.dll" $target -Force
+          Write-Host "Staged assemblies → $target"
+          Get-ChildItem $target -Filter *.dll | Select-Object -First 20 | % { " - " + $_.Name }
 
       - name: Checkout DevOps_Toolkit (ComplianceRunner)
         uses: actions/checkout@v4
@@ -103,6 +215,7 @@ jobs:
           repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
           ref: main
           path: _devops
+          fetch-depth: 0
 
       - name: Build ComplianceRunner
         working-directory: _devops/src/Compliance/ComplianceRunner
@@ -122,6 +235,7 @@ jobs:
         shell: pwsh
         run: |
           $proj = "_devops/src/Compliance/ComplianceRunner/ComplianceRunner.csproj"
+
           $rules = @()
           foreach ($r in @("${{ inputs.rules }}" -split "`n")) {
             if ($r.Trim() -ne "") { $rules += @("--rule", $r.Trim()) }
@@ -133,21 +247,20 @@ jobs:
           foreach ($file in Get-Content changed.txt) {
             if ($file.Trim()) {
               $out = "$temp/part_$i.sarif"
-              dotnet run -c ${{ inputs.configuration }} --project $proj -- "$file" @rules --sarif "$out"
+              dotnet run -c ${{ inputs.configuration }} --project $proj -- `
+                "$file" @rules --sarif "$out"
               $i++
             }
           }
 
-          # Merge SARIF parts
+          # Merge parts to single SARIF for upload
           $combined = @{
             version = "2.1.0"
             $schema = "https://json.schemastore.org/sarif-2.1.0.json"
-            runs = @(
-              @{
-                tool = @{ driver = @{ name = "BHoM Compliance Runner"; version = "1.0.0"; rules = @() } }
-                results = @()
-              }
-            )
+            runs = @(@{
+              tool = @{ driver = @{ name = "BHoM Compliance Runner"; version = "1.0.0"; rules = @() } }
+              results = @()
+            })
           }
 
           foreach ($p in Get-ChildItem $temp -Filter "*.sarif") {
@@ -156,12 +269,11 @@ jobs:
             $combined.runs[0].tool.driver.rules += $j.runs[0].tool.driver.rules
           }
 
-          # dedupe rules
+          # De-dupe rules by id
           $combined.runs[0].tool.driver.rules =
             ($combined.runs[0].tool.driver.rules | Group-Object id | ForEach-Object { $_.Group[0] })
 
           $combined | ConvertTo-Json -Depth 100 | Out-File compliance.sarif -Encoding utf8
-
 
       # ----- Push mode OR PR w/ no changed files -----
       - name: Run full compliance
@@ -169,11 +281,14 @@ jobs:
         shell: pwsh
         run: |
           $proj = "_devops/src/Compliance/ComplianceRunner/ComplianceRunner.csproj"
+
           $rules = @()
           foreach ($r in @("${{ inputs.rules }}" -split "`n")) {
             if ($r.Trim() -ne "") { $rules += @("--rule", $r.Trim()) }
           }
-          dotnet run -c ${{ inputs.configuration }} --project $proj -- "." @rules --sarif "compliance.sarif"
+
+          dotnet run -c ${{ inputs.configuration }} --project $proj -- `
+            "." @rules --sarif "compliance.sarif"
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
