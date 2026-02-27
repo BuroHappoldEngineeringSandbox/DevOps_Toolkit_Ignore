@@ -1,0 +1,90 @@
+name: Clone & Build BHoM Dependencies
+
+on:
+  workflow_call:
+    inputs:
+      dependencies:
+        description: "Newline-separated list of dependency repositories"
+        required: true
+        type: string
+
+    outputs:
+      assemblies-path:
+        description: "Path to the built assemblies folder"
+        value: ${{ jobs.clone_build.outputs.assemblies-path }}
+
+jobs:
+  clone_build:
+    runs-on: windows-latest
+
+    outputs:
+      assemblies-path: ${{ steps.set-output-path.outputs.path }}
+
+    steps:
+      - name: Set assemblies output path
+        id: set-output-path
+        run: echo "path=${{ github.workspace }}\.bhom\BHoM\Assemblies" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: Prepare dependency directories
+        run: |
+          mkdir -Force .bhom
+          mkdir -Force .bhom\BHoM
+          mkdir -Force .bhom\BHoM\Assemblies
+          mkdir -Force deps
+        shell: pwsh
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            6.0.x
+
+      - name: Convert dependency list into array
+        id: parse
+        run: |
+          $repos = @()
+          $lines = @("${{ inputs.dependencies }}".Split("`n"))
+          foreach ($line in $lines) {
+            $trimmed = $line.Trim()
+            if ($trimmed -ne "") { $repos += $trimmed }
+          }
+
+          Write-Host "Parsed dependencies:"
+          $repos | ForEach-Object { Write-Host $_ }
+
+          # Export as JSON array for next steps
+          $json = $repos | ConvertTo-Json -Compress
+          echo "repos=$json" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: Clone dependency repositories
+        run: |
+          $repos = ConvertFrom-Json '${{ steps.parse.outputs.repos }}'
+          foreach ($repo in $repos) {
+            Write-Host "::group::Cloning $repo"
+            $repoName = $repo.Split('/')[1]
+            git clone https://github.com/$repo.git "deps/$repoName"
+            Write-Host "::endgroup::"
+          }
+        shell: pwsh
+
+      - name: Build dependencies
+        run: |
+          foreach ($dir in Get-ChildItem "deps" -Directory) {
+            Write-Host "::group::Building $($dir.Name)"
+            dotnet build $dir.FullName -c Release
+            Write-Host "::endgroup::"
+          }
+        shell: pwsh
+
+      - name: Gather dependency DLLs
+        run: |
+          foreach ($dir in Get-ChildItem "deps" -Directory) {
+            $dlls = Get-ChildItem "$($dir.FullName)\**\bin\Release\*.dll" -Recurse -ErrorAction SilentlyContinue
+            foreach ($dll in $dlls) {
+              Copy-Item $dll.FullName ".bhom\BHoM\Assemblies" -Force
+            }
+          }
+        shell: pwsh
