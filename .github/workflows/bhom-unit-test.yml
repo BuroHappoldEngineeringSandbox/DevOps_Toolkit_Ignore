@@ -1,30 +1,37 @@
-name: BHoM Unit Tests
+name: BHoM Unit Tests (deps from dependencies.txt)
 
 on:
   workflow_call:
     inputs:
-      dependencies:
-        description: "Newline-separated list of dependency repos (owner/repo per line). Leave empty if none."
-        required: false
-        type: string
-        default: ""
       dotnet_version:
-        description: ".NET SDK version"
+        description: ".NET SDK version(s). First should support your targets (e.g., 10.x)"
         required: false
         type: string
-        default: "8.x"
+        default: |
+          10.x
+          8.x
       configuration:
         description: "Build configuration"
         required: false
         type: string
         default: "Release"
       test_solution:
-        description: "Path to test solution (.sln or .slnf)"
+        description: "Path to the unit test solution (.sln or .slnf/.slnx)"
         required: false
         type: string
         default: ".ci/tests/UnitTests/UnitTests.sln"
+      deps_file:
+        description: "Path to dependencies file in the caller repo"
+        required: false
+        type: string
+        default: "dependencies.txt"
+      default_org:
+        description: "Default org for shorthand 'Repo' entries"
+        required: false
+        type: string
+        default: "${{ github.repository_owner }}"
       token:
-        description: "Token for cloning private repos (passed down to dependency builder)."
+        description: "Token for cloning private repos (PAT preferred, else GITHUB_TOKEN)"
         required: false
         type: string
         default: ""
@@ -34,32 +41,153 @@ permissions:
   pull-requests: write
 
 jobs:
-  # 1) Build dependencies (if provided) and publish assemblies as artifact
+  # ---------------------------------------
+  # Job A: Build dependencies from deps file
+  # ---------------------------------------
   deps:
-    if: ${{ inputs.dependencies != '' }}
-    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/bhom-clone-build.yml@main
-    with:
-      dependencies: ${{ inputs.dependencies }}
-      dotnet_version: ${{ inputs.dotnet_version }}
-      configuration: ${{ inputs.configuration }}
-      token: ${{ inputs.token }}
+    runs-on: windows-latest
+    env:
+      CONFIGURATION: ${{ inputs.configuration }}
+      DEP_TOKEN: ${{ inputs.token != '' && inputs.token || github.token }}
 
-  # 2) Build, test, and produce coverage
+    steps:
+      - name: Checkout caller repo (to read dependencies.txt)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK(s)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      - name: Setup NuGet (for legacy packages.config restore)
+        uses: NuGet/setup-nuget@v2
+        with:
+          nuget-version: '6.x'
+
+      - name: Prepare folders + ensure ProgramData\BHoM\Assemblies
+        shell: pwsh
+        run: |
+          mkdir -Force deps | Out-Null
+          mkdir -Force deps-assemblies | Out-Null
+          $dst = Join-Path $env:ProgramData "BHoM\Assemblies"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+
+      - name: Read dependencies.txt
+        id: read-deps
+        shell: pwsh
+        run: |
+          $file = "${{ inputs.deps_file }}"
+          if (-not (Test-Path $file)) {
+            Write-Host "No dependencies file found at: $file"
+            # We still proceed (some repos may not have deps)
+            "repos=[]" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          $defaultOrg = "${{ inputs.default_org }}"
+
+          $repos = @()
+          $lines = Get-Content $file | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') }
+          foreach ($line in $lines) {
+            # Parse Owner/Repo[@ref] or Repo[@ref]
+            $ownerRepo,$ref = $line.Split('@',2)
+            if ($ownerRepo -notmatch "/") {
+              $ownerRepo = "$defaultOrg/$ownerRepo"
+            }
+            $obj = [PSCustomObject]@{
+              full = $ownerRepo
+              ref  = $ref
+            }
+            $repos += $obj
+          }
+          $json = $repos | ConvertTo-Json -Compress
+          "repos=$json" >> $env:GITHUB_OUTPUT
+
+      - name: Clone dependencies in declared order
+        if: ${{ steps.read-deps.outputs.repos != '[]' }}
+        shell: pwsh
+        run: |
+          $repos = ConvertFrom-Json '${{ steps.read-deps.outputs.repos }}'
+          foreach ($r in $repos) {
+            $repo = $r.full
+            $name = $repo.Split('/')[1]
+            $url  = "https://x-access-token:$env:DEP_TOKEN@github.com/$repo.git"
+            Write-Host "::group::Cloning $repo"
+            git clone --depth 1 $url "deps/$name"
+            if ($r.ref) {
+              Push-Location "deps/$name"
+              git fetch origin $r.ref --depth 1 || git fetch origin --tags
+              git checkout $r.ref || (Write-Error "Failed to checkout ref '$($r.ref)' in $repo"; exit 1)
+              Pop-Location
+            }
+            Write-Host "::endgroup::"
+          }
+
+      - name: NuGet restore for packages.config repos (if any)
+        if: ${{ steps.read-deps.outputs.repos != '[]' }}
+        shell: pwsh
+        run: |
+          foreach ($dir in Get-ChildItem deps -Directory) {
+            $hasPackagesConfig = @(Get-ChildItem $dir.FullName -Recurse -Filter packages.config -ErrorAction SilentlyContinue).Count -gt 0
+            if ($hasPackagesConfig) {
+              Write-Host "::group::NuGet restore (packages.config) for $($dir.Name)"
+              nuget restore $dir.FullName -NonInteractive
+              Write-Host "::endgroup::"
+            }
+          }
+
+      - name: Build dependencies in declared order
+        if: ${{ steps.read-deps.outputs.repos != '[]' }}
+        shell: pwsh
+        run: |
+          $repos = ConvertFrom-Json '${{ steps.read-deps.outputs.repos }}'
+          foreach ($r in $repos) {
+            $name = $r.full.Split('/')[1]
+            $dir  = Join-Path "deps" $name
+            Write-Host "::group::Building $name"
+            dotnet build $dir -c $env:CONFIGURATION
+            Write-Host "::endgroup::"
+          }
+
+      - name: Collect dependency DLLs
+        if: ${{ steps.read-deps.outputs.repos != '[]' }}
+        shell: pwsh
+        run: |
+          foreach ($dir in Get-ChildItem "deps" -Directory) {
+            $dlls = Get-ChildItem "$($dir.FullName)\**\bin\$env:CONFIGURATION\*.dll" -Recurse -ErrorAction SilentlyContinue
+            foreach ($dll in $dlls) {
+              Copy-Item $dll.FullName "deps-assemblies" -Force
+            }
+          }
+          Write-Host "Collected assemblies:"
+          Get-ChildItem "deps-assemblies" -Filter *.dll | Sort-Object Name | Select-Object -First 60 | ForEach-Object { $_.Name }
+
+      - name: Upload assemblies artifact (for this run)
+        if: ${{ steps.read-deps.outputs.repos != '[]' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: deps-assemblies
+          path: deps-assemblies/**
+          if-no-files-found: warn
+
+  # ---------------------------------------
+  # Job B: Stage deps, build & test
+  # ---------------------------------------
   test:
     runs-on: windows-latest
     needs: [deps]
-    if: always()
     env:
       DOTNET_NOLOGO: true
       DOTNET_CLI_TELEMETRY_OPTOUT: true
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup .NET SDK
+      - name: Setup .NET SDK(s)
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ inputs.dotnet_version }}
@@ -68,7 +196,7 @@ jobs:
             **/*.csproj
             **/packages.lock.json
 
-      - name: Download dependency assemblies (if any)
+      - name: Download dependency assemblies (if present)
         uses: actions/download-artifact@v4
         with:
           name: deps-assemblies
@@ -84,10 +212,9 @@ jobs:
             New-Item -ItemType Directory -Force -Path $dst | Out-Null
             Copy-Item -Path (Join-Path $src "*.dll") -Destination $dst -Force -ErrorAction SilentlyContinue
             Write-Host "Staged assemblies to: $dst"
-            Write-Host "Sample contents:"
             Get-ChildItem $dst -Filter *.dll | Sort-Object Name | Select-Object -First 30 | ForEach-Object { $_.Name }
           } else {
-            Write-Host "No dependency assemblies artifact found (dependencies may be empty)."
+            Write-Host "No dependency assemblies found (repo may not need external deps)."
           }
 
       - name: Verify test solution exists
@@ -105,21 +232,16 @@ jobs:
             Write-Host "✅ Found test solution: $path"
           }
 
-      - name: Ensure dotnet tools path is on PATH
-        shell: pwsh
-        run: echo "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
-
-      - name: Restore solution
+      - name: Restore
         run: dotnet restore "${{ inputs.test_solution }}"
 
       - name: Build (${{ inputs.configuration }})
         run: dotnet build "${{ inputs.test_solution }}" --no-restore --configuration ${{ inputs.configuration }}
 
-      - name: Test (TRX + XPlat coverage)
+      - name: Test (TRX + Coverage)
         continue-on-error: true
         run: >
           dotnet test "${{ inputs.test_solution }}"
-          --no-build
           --configuration ${{ inputs.configuration }}
           --verbosity normal
           --logger "trx;LogFileName=tests.trx"
@@ -139,49 +261,3 @@ jobs:
         with:
           name: coverage
           path: "**/TestResults/**/coverage.cobertura.xml"
-
-      - name: Install ReportGenerator
-        run: dotnet tool install -g dotnet-reportgenerator-globaltool
-
-      - name: Create coverage summary
-        run: |
-          reportgenerator `
-            -reports:"**/TestResults/**/coverage.cobertura.xml" `
-            -targetdir:"coverage-report" `
-            -reporttypes:"MarkdownSummaryGithub;Cobertura"
-
-      - name: Add coverage summary to job summary
-        shell: pwsh
-        run: |
-          Get-Content "coverage-report/SummaryGithub.md" |
-            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-
-      - name: Post coverage summary as PR comment
-        if: github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: "code-coverage"
-          path: coverage-report/SummaryGithub.md
-
-  # ---------------------------------------------------------
-  # Job 2: Publish test results to GitHub Checks API
-  # ---------------------------------------------------------
-  publish_test_results_linux:
-    name: Publish Unit Test Results (PR Check)
-    runs-on: ubuntu-latest
-    needs: test
-    if: always()
-    permissions:
-      checks: write
-      pull-requests: write
-      contents: read
-    steps:
-      - name: Download TRX artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: test-results
-          path: test-results
-      - name: Publish test results (TRX)
-        uses: EnricoMi/publish-unit-test-result-action@v2.16.1
-        with:
-          trx_files: "test-results/**/*.trx"
