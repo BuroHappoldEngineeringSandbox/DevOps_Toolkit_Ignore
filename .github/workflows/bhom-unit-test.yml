@@ -3,32 +3,28 @@ name: BHoM Unit Tests
 on:
   workflow_call:
     inputs:
+      dependencies:
+        description: "Newline-separated list of dependency repos (owner/repo per line). Leave empty if none."
+        required: false
+        type: string
+        default: ""
       dotnet_version:
         description: ".NET SDK version"
         required: false
         type: string
-        default: "10.x"
-
+        default: "8.x"
       configuration:
         description: "Build configuration"
         required: false
         type: string
         default: "Release"
-
       test_solution:
-        description: "Path to test solution (.sln or .slnf/.slnx)"
+        description: "Path to test solution (.sln or .slnf)"
         required: false
         type: string
         default: ".ci/tests/UnitTests/UnitTests.sln"
-
-      deps_file:
-        description: "Path to dependencies.txt inside the repo"
-        required: false
-        type: string
-        default: "dependencies.txt"
-
       token:
-        description: "Token for cloning private repos (PAT preferred)"
+        description: "Token for cloning private repos (passed down to dependency builder)."
         required: false
         type: string
         default: ""
@@ -38,62 +34,17 @@ permissions:
   pull-requests: write
 
 jobs:
-  # ---------------------------------------------------------
-  # Job 1: Read dependencies.txt & clone/build dependencies
-  # ---------------------------------------------------------
+  # 1) Build dependencies (if provided) and publish assemblies as artifact
   deps:
-    runs-on: windows-latest
-    outputs:
-      deps-list: ${{ steps.collect.outputs.deps-list }}
+    if: ${{ inputs.dependencies != '' }}
+    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/bhom-clone-build.yml@main
+    with:
+      dependencies: ${{ inputs.dependencies }}
+      dotnet_version: ${{ inputs.dotnet_version }}
+      configuration: ${{ inputs.configuration }}
+      token: ${{ inputs.token }}
 
-    steps:
-      - name: Checkout caller repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Read dependencies.txt
-        id: collect
-        shell: pwsh
-        run: |
-          $file = "${{ inputs.deps_file }}"
-
-          if (-not (Test-Path $file)) {
-            Write-Host "No dependencies.txt found — skipping dependency build."
-            echo "deps-list=" >> $env:GITHUB_OUTPUT
-            exit 0
-          }
-
-          $lines = Get-Content $file |
-                   Where-Object { $_ -and -not $_.StartsWith('#') } |
-                   ForEach-Object { $_.Trim() }
-
-          if ($lines.Count -eq 0) {
-            Write-Host "dependencies.txt is empty — skipping dependency build."
-            echo "deps-list=" >> $env:GITHUB_OUTPUT
-            exit 0
-          }
-
-          # This becomes the newline-separated list for clone-build workflow
-          $joined = $lines -join "`n"
-
-          Write-Host "Dependencies found:"
-          $lines | ForEach-Object { Write-Host " - $_" }
-
-          echo "deps-list=$joined" >> $env:GITHUB_OUTPUT
-
-      - name: Build dependencies (if any)
-        if: ${{ steps.collect.outputs.deps-list != '' }}
-        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/bhom-clone-build.yml@main
-        with:
-          dependencies: ${{ steps.collect.outputs.deps-list }}
-          dotnet_version: ${{ inputs.dotnet_version }}
-          configuration: ${{ inputs.configuration }}
-          token: ${{ inputs.token }}
-
-  # ---------------------------------------------------------
-  # Job 2: Build, test, generate coverage
-  # ---------------------------------------------------------
+  # 2) Build, test, and produce coverage
   test:
     runs-on: windows-latest
     needs: [deps]
@@ -117,7 +68,7 @@ jobs:
             **/*.csproj
             **/packages.lock.json
 
-      - name: Download dependency assemblies
+      - name: Download dependency assemblies (if any)
         uses: actions/download-artifact@v4
         with:
           name: deps-assemblies
@@ -128,54 +79,66 @@ jobs:
         shell: pwsh
         run: |
           $src = "deps-assemblies"
-          $dst = Join-Path $env:ProgramData "BHoM\Assemblies"
-
           if (Test-Path $src) {
+            $dst = Join-Path $env:ProgramData "BHoM\Assemblies"
             New-Item -ItemType Directory -Force -Path $dst | Out-Null
-            Copy-Item "$src\*.dll" $dst -Force
-            Write-Host "Staged assemblies to $dst"
-            Get-ChildItem $dst -Filter *.dll | Select-Object -First 20 | ForEach-Object { $_.Name }
+            Copy-Item -Path (Join-Path $src "*.dll") -Destination $dst -Force -ErrorAction SilentlyContinue
+            Write-Host "Staged assemblies to: $dst"
+            Write-Host "Sample contents:"
+            Get-ChildItem $dst -Filter *.dll | Sort-Object Name | Select-Object -First 30 | ForEach-Object { $_.Name }
           } else {
-            Write-Host "⚠️ No dependency assemblies found."
+            Write-Host "No dependency assemblies artifact found (dependencies may be empty)."
           }
 
       - name: Verify test solution exists
         shell: pwsh
         run: |
-          if (-not (Test-Path "${{ inputs.test_solution }}")) {
-            Write-Error "❌ Test solution not found: ${{ inputs.test_solution }}"
+          $path = "${{ inputs.test_solution }}"
+          if (-not (Test-Path $path)) {
+            Write-Host "❌ Test solution not found at: $path"
+            if (Test-Path ".ci/tests") {
+              Write-Host "📁 Listing .ci/tests for debugging:"
+              Get-ChildItem -Path ".ci/tests" -Recurse -File | ForEach-Object { $_.FullName }
+            }
             exit 1
+          } else {
+            Write-Host "✅ Found test solution: $path"
           }
+
+      - name: Ensure dotnet tools path is on PATH
+        shell: pwsh
+        run: echo "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
 
       - name: Restore solution
         run: dotnet restore "${{ inputs.test_solution }}"
 
-      - name: Build solution (${{ inputs.configuration }})
+      - name: Build (${{ inputs.configuration }})
         run: dotnet build "${{ inputs.test_solution }}" --no-restore --configuration ${{ inputs.configuration }}
 
-      - name: Run tests (TRX + Coverage)
+      - name: Test (TRX + XPlat coverage)
         continue-on-error: true
         run: >
           dotnet test "${{ inputs.test_solution }}"
+          --no-build
           --configuration ${{ inputs.configuration }}
           --verbosity normal
           --logger "trx;LogFileName=tests.trx"
           --results-directory TestResults
           --collect:"XPlat Code Coverage"
 
-      - name: Upload test results
+      - name: Upload test results (TRX)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results
           path: "**/TestResults/**/*.trx"
-        if: always()
 
-      - name: Upload coverage (Cobertura XML)
+      - name: Upload raw coverage (Cobertura XML)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage
           path: "**/TestResults/**/coverage.cobertura.xml"
-        if: always()
 
       - name: Install ReportGenerator
         run: dotnet tool install -g dotnet-reportgenerator-globaltool
@@ -187,13 +150,13 @@ jobs:
             -targetdir:"coverage-report" `
             -reporttypes:"MarkdownSummaryGithub;Cobertura"
 
-      - name: Add coverage summary to Job Summary
+      - name: Add coverage summary to job summary
         shell: pwsh
         run: |
           Get-Content "coverage-report/SummaryGithub.md" |
             Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
-      - name: Post coverage summary comment
+      - name: Post coverage summary as PR comment
         if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
@@ -201,7 +164,7 @@ jobs:
           path: coverage-report/SummaryGithub.md
 
   # ---------------------------------------------------------
-  # Job 3: Publish tests to GitHub Checks (Linux)
+  # Job 2: Publish test results to GitHub Checks API
   # ---------------------------------------------------------
   publish_test_results_linux:
     name: Publish Unit Test Results (PR Check)
@@ -212,15 +175,13 @@ jobs:
       checks: write
       pull-requests: write
       contents: read
-
     steps:
       - name: Download TRX artifacts
         uses: actions/download-artifact@v4
         with:
           name: test-results
           path: test-results
-
-      - name: Publish test results
+      - name: Publish test results (TRX)
         uses: EnricoMi/publish-unit-test-result-action@v2.16.1
         with:
           trx_files: "test-results/**/*.trx"
