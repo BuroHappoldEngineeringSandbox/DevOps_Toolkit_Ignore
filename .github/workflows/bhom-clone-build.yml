@@ -4,87 +4,99 @@ on:
   workflow_call:
     inputs:
       dependencies:
-        description: "Newline-separated list of dependency repositories"
+        description: "Newline-separated list of dependency repositories (owner/repo per line)"
         required: true
         type: string
-
-    outputs:
-      assemblies-path:
-        description: "Path to the built assemblies folder"
-        value: ${{ jobs.clone_build.outputs.assemblies-path }}
+      dotnet_version:
+        description: ".NET SDK version"
+        required: false
+        type: string
+        default: "8.x"
+      configuration:
+        description: "Build configuration"
+        required: false
+        type: string
+        default: "Release"
+      token:
+        description: "Token for cloning private repos (PAT preferred). If empty, falls back to GITHUB_TOKEN."
+        required: false
+        type: string
+        default: ""
 
 jobs:
   clone_build:
     runs-on: windows-latest
 
-    outputs:
-      assemblies-path: ${{ steps.set-output-path.outputs.path }}
+    env:
+      CONFIGURATION: ${{ inputs.configuration }}
+      # Prefer caller-provided PAT; otherwise use the workflow's ephemeral GITHUB_TOKEN
+      DEP_TOKEN: ${{ inputs.token != '' && inputs.token || github.token }}
 
     steps:
-      - name: Set assemblies output path
-        id: set-output-path
-        run: echo "path=${{ github.workspace }}\.bhom\BHoM\Assemblies" >> $env:GITHUB_OUTPUT
-        shell: pwsh
-
-      - name: Prepare dependency directories
-        run: |
-          mkdir -Force .bhom
-          mkdir -Force .bhom\BHoM
-          mkdir -Force .bhom\BHoM\Assemblies
-          mkdir -Force deps
-        shell: pwsh
-
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: |
-            8.0.x
-            6.0.x
+          dotnet-version: ${{ inputs.dotnet_version }}
 
-      - name: Convert dependency list into array
+      - name: Prepare directories
+        shell: pwsh
+        run: |
+          mkdir -Force deps | Out-Null
+          mkdir -Force deps-assemblies | Out-Null
+
+      - name: Parse dependency list
         id: parse
+        shell: pwsh
         run: |
           $repos = @()
           $lines = @("${{ inputs.dependencies }}".Split("`n"))
           foreach ($line in $lines) {
-            $trimmed = $line.Trim()
-            if ($trimmed -ne "") { $repos += $trimmed }
+            $t = $line.Trim()
+            if ($t) { $repos += $t }
           }
-
-          Write-Host "Parsed dependencies:"
-          $repos | ForEach-Object { Write-Host $_ }
-
-          # Export as JSON array for next steps
+          if ($repos.Count -eq 0) {
+            Write-Error "No dependencies parsed. Ensure you passed a newline-separated list."
+            exit 1
+          }
           $json = $repos | ConvertTo-Json -Compress
-          echo "repos=$json" >> $env:GITHUB_OUTPUT
-        shell: pwsh
+          "repos=$json" >> $env:GITHUB_OUTPUT
 
-      - name: Clone dependency repositories
+      - name: Clone dependencies
+        shell: pwsh
         run: |
           $repos = ConvertFrom-Json '${{ steps.parse.outputs.repos }}'
           foreach ($repo in $repos) {
             Write-Host "::group::Cloning $repo"
             $repoName = $repo.Split('/')[1]
-            git clone https://github.com/$repo.git "deps/$repoName"
+            $url = "https://x-access-token:$env:DEP_TOKEN@github.com/$repo.git"
+            git clone --depth 1 $url "deps/$repoName"
             Write-Host "::endgroup::"
           }
-        shell: pwsh
 
       - name: Build dependencies
+        shell: pwsh
         run: |
           foreach ($dir in Get-ChildItem "deps" -Directory) {
             Write-Host "::group::Building $($dir.Name)"
-            dotnet build $dir.FullName -c Release
+            dotnet build $dir.FullName -c $env:CONFIGURATION
             Write-Host "::endgroup::"
           }
-        shell: pwsh
 
-      - name: Gather dependency DLLs
+      - name: Gather DLLs
+        shell: pwsh
         run: |
           foreach ($dir in Get-ChildItem "deps" -Directory) {
-            $dlls = Get-ChildItem "$($dir.FullName)\**\bin\Release\*.dll" -Recurse -ErrorAction SilentlyContinue
+            $dlls = Get-ChildItem "$($dir.FullName)\**\bin\$env:CONFIGURATION\*.dll" -Recurse -ErrorAction SilentlyContinue
             foreach ($dll in $dlls) {
-              Copy-Item $dll.FullName ".bhom\BHoM\Assemblies" -Force
+              Copy-Item $dll.FullName "deps-assemblies" -Force
             }
           }
-        shell: pwsh
+          Write-Host "Collected assemblies:"
+          Get-ChildItem "deps-assemblies" -Filter *.dll | Sort-Object Name | Select-Object -First 50 | ForEach-Object { $_.Name }
+
+      - name: Upload dependency assemblies
+        uses: actions/upload-artifact@v4
+        with:
+          name: deps-assemblies
+          path: deps-assemblies/**
+          if-no-files-found: warn
