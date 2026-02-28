@@ -1,3 +1,4 @@
+
 name: BHoM Unit Tests (Caller)
 
 on:
@@ -25,15 +26,10 @@ on:
         type: string
         default: ""
       test_solution:
-              description: "Path to test solution (.sln or .slnf)"
-              required: false
-              type: string
-              default: ".ci/tests/UnitTests/UnitTests.sln"
-
-
-permissions:
-  contents: write
-  pull-requests: write
+        description: "Path to test solution (.sln or .slnf)"
+        required: false
+        type: string
+        default: ".ci/tests/UnitTests/UnitTests.sln"
 
 jobs:
   deps:
@@ -43,7 +39,6 @@ jobs:
       configuration: ${{ inputs.configuration }}
       token: ${{ inputs.token }}
       # Keep deps_file defaulting to 'dependencies.txt' in the caller repo
-      # Optionally forward extra_repos if a repo wants additional toolkits pre-built
       extra_repos: ${{ inputs.extra_repos }}
 
   test:
