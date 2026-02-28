@@ -3,10 +3,11 @@ name: Clone & Build BHoM Dependencies
 on:
   workflow_call:
     inputs:
-      dependencies:
-        description: "Newline-separated list of dependency repositories (owner/repo per line)"
-        required: true
+      deps_file:
+        description: "Path to dependencies.txt in the caller repo"
+        required: false
         type: string
+        default: "dependencies.txt"
       dotnet_version:
         description: ".NET SDK version"
         required: false
@@ -26,13 +27,15 @@ on:
 jobs:
   clone_build:
     runs-on: windows-latest
-
     env:
       CONFIGURATION: ${{ inputs.configuration }}
-      # Prefer caller-provided PAT; otherwise use the workflow's ephemeral GITHUB_TOKEN
       DEP_TOKEN: ${{ inputs.token != '' && inputs.token || github.token }}
-
     steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
@@ -44,24 +47,35 @@ jobs:
           mkdir -Force deps | Out-Null
           mkdir -Force deps-assemblies | Out-Null
 
-      - name: Parse dependency list
+      - name: Read dependencies.txt
         id: parse
         shell: pwsh
         run: |
-          $repos = @()
-          $lines = @("${{ inputs.dependencies }}".Split("`n"))
-          foreach ($line in $lines) {
-            $t = $line.Trim()
-            if ($t) { $repos += $t }
+          $file = "${{ inputs.deps_file }}"
+          if (-not (Test-Path $file)) {
+            Write-Host "No dependencies file found at: $file — skipping clone/build."
+            "repos=[]" >> $env:GITHUB_OUTPUT
+            exit 0
           }
+
+          $repos = Get-Content $file |
+            Where-Object { $_ -and -not $_.Trim().StartsWith('#') } |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -ne '' }
+
           if ($repos.Count -eq 0) {
-            Write-Error "No dependencies parsed. Ensure you passed a newline-separated list."
-            exit 1
+            Write-Host "dependencies.txt is empty — skipping clone/build."
+            "repos=[]" >> $env:GITHUB_OUTPUT
+            exit 0
           }
+
+          Write-Host "Dependencies:"
+          $repos | ForEach-Object { Write-Host " - $_" }
           $json = $repos | ConvertTo-Json -Compress
           "repos=$json" >> $env:GITHUB_OUTPUT
 
       - name: Clone dependencies
+        if: ${{ steps.parse.outputs.repos != '[]' }}
         shell: pwsh
         run: |
           $repos = ConvertFrom-Json '${{ steps.parse.outputs.repos }}'
@@ -74,6 +88,7 @@ jobs:
           }
 
       - name: Build dependencies
+        if: ${{ steps.parse.outputs.repos != '[]' }}
         shell: pwsh
         run: |
           foreach ($dir in Get-ChildItem "deps" -Directory) {
@@ -83,6 +98,7 @@ jobs:
           }
 
       - name: Gather DLLs
+        if: ${{ steps.parse.outputs.repos != '[]' }}
         shell: pwsh
         run: |
           foreach ($dir in Get-ChildItem "deps" -Directory) {
@@ -92,7 +108,10 @@ jobs:
             }
           }
           Write-Host "Collected assemblies:"
-          Get-ChildItem "deps-assemblies" -Filter *.dll | Sort-Object Name | Select-Object -First 50 | ForEach-Object { $_.Name }
+          Get-ChildItem "deps-assemblies" -Filter *.dll |
+            Sort-Object Name |
+            Select-Object -First 50 |
+            ForEach-Object { $_.Name }
 
       - name: Upload dependency assemblies
         uses: actions/upload-artifact@v4
