@@ -1,5 +1,4 @@
-
-name: BHoM Unit Tests
+name: BHoM Unit Tests (Caller)
 
 on:
   workflow_call:
@@ -14,31 +13,39 @@ on:
         required: false
         type: string
         default: "Release"
-      test_solution:
-        description: "Path to test solution (.sln or .slnf)"
-        required: false
-        type: string
-        default: ".ci/tests/UnitTests/UnitTests.sln"
       token:
         description: "Token for cloning private repos (PAT preferred)"
         required: false
         type: string
         default: ""
+      # Optional: allow a repo to request extra toolkits now or later without changing interface
+      extra_repos:
+        description: "Optional extra repos (owner/repo per line) to also clone/build"
+        required: false
+        type: string
+        default: ""
+      test_solution:
+              description: "Path to test solution (.sln or .slnf)"
+              required: false
+              type: string
+              default: ".ci/tests/UnitTests/UnitTests.sln"
+
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  # Dependencies: always let the reusable workflow handle dependencies.txt
   deps:
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/bhom-clone-build.yml@main
     with:
       dotnet_version: ${{ inputs.dotnet_version }}
       configuration: ${{ inputs.configuration }}
       token: ${{ inputs.token }}
+      # Keep deps_file defaulting to 'dependencies.txt' in the caller repo
+      # Optionally forward extra_repos if a repo wants additional toolkits pre-built
+      extra_repos: ${{ inputs.extra_repos }}
 
-  # Build, Test, Coverage (unchanged structure)
   test:
     runs-on: windows-latest
     needs: [deps]
@@ -55,10 +62,6 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ inputs.dotnet_version }}
-          cache: true
-          cache-dependency-path: |
-            **/*.csproj
-            **/packages.lock.json
 
       - name: Download dependency assemblies
         uses: actions/download-artifact@v4
@@ -71,16 +74,18 @@ jobs:
         shell: pwsh
         run: |
           $src = "deps-assemblies"
+          $dst = Join-Path $env:ProgramData "BHoM\Assemblies"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
           if (Test-Path $src) {
-            $dst = Join-Path $env:ProgramData "BHoM\Assemblies"
-            New-Item -ItemType Directory -Force -Path $dst | Out-Null
-            Copy-Item -Path "$src\*.dll" -Destination $dst -Force
+            Copy-Item -Path "$src\*.dll" -Destination $dst -Force -ErrorAction SilentlyContinue
             Write-Host "Staged assemblies to: $dst"
             Get-ChildItem $dst -Filter *.dll | Sort-Object Name | Select-Object -First 30
           } else {
             Write-Host "No dependency assemblies found — repo likely has no deps."
           }
 
+      # --- Your test approach goes here (intentionally left open) ---
+      # e.g., dotnet test, custom runners, coverage, etc.
 
       - name: Verify test solution exists
         shell: pwsh
