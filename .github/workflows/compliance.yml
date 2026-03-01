@@ -28,27 +28,30 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-      security-events: write
+      security-events: write   # required for SARIF upload
     defaults:
       run:
         shell: pwsh
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (full history for diffs)
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ inputs.dotnet_version }}
 
-      - uses: actions/download-artifact@v4
+      - name: Download dependency assemblies
+        uses: actions/download-artifact@v4
         with:
           name: deps-assemblies
           path: deps-assemblies
         continue-on-error: true
 
-      - name: Stage assemblies
+      - name: Stage assemblies to ProgramData\BHoM\Assemblies
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
         with:
           source: "deps-assemblies"

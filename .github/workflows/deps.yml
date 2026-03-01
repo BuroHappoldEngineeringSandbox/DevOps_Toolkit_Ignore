@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       deps_file:      { type: string,  default: "dependencies.txt" }
-      extra_repos:    { type: string,  default: "" }   # newline-separated owner/repo[@ref]
+      extra_repos:    { type: string,  default: "" }   # newline-separated owner/repo[@ref] (Phase B seeds)
       dotnet_version: { type: string,  default: "10.x" }
       configuration:  { type: string,  default: "Release" }
       token:          { type: string,  default: "" }   # GitHub App token/PAT if private deps
@@ -31,6 +31,11 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ inputs.dotnet_version }}
+
+      - name: Setup NuGet CLI
+        uses: nuget/setup-nuget@v2
+        with:
+          nuget-version: '6.x'
 
       - name: Cache NuGet packages
         uses: actions/cache@v4
@@ -182,8 +187,6 @@ jobs:
           $seedsA = Lines "${{ inputs.deps_file }}"
           foreach ($seed in $seedsA) {
             $sp = Parse-RepoSpec $seed
-            # Build the seed chain (deps first, then the seed), but for Phase A we DO NOT include the seed repo itself
-            # because the caller repo is being built outside this reusable builder.
             $chain = Build-Chain $sp.Key $true $sp.Ref
             foreach ($item in $chain) { if (-not $phaseA.Contains($item)) { $phaseA.Add($item) | Out-Null } }
           }
@@ -199,7 +202,6 @@ jobs:
 
             foreach ($seed in $seedsB) {
               $sp = Parse-RepoSpec $seed
-              # For Phase B we include the seed repo itself AFTER its deps
               $chain = Build-Chain $sp.Key $true $sp.Ref
               foreach ($item in $chain) { if (-not $phaseB.Contains($item)) { $phaseB.Add($item) | Out-Null } }
               Write-Host "B (seed): $($sp.Key)"
@@ -271,29 +273,42 @@ jobs:
             Write-Host "::group::Building $repoName"
 
             $solution = Get-ChildItem $repoPath -Recurse -Filter *.sln -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($null -ne $solution) {
-              try {
-                dotnet restore $solution.FullName
-                dotnet build   $solution.FullName -c $env:CONFIGURATION --no-restore --nologo -m
-              } catch {
-                Write-Warning "Build FAILED for solution '$($solution.FullName)': $($_.Exception.Message)"
-                $overallFailures += "$repoName (sln)"
+            $usesPackagesConfig = (Get-ChildItem $repoPath -Recurse -Filter packages.config -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
+
+            try {
+              if ($null -ne $solution) {
+                if ($usesPackagesConfig) {
+                  # Legacy restore to solution-local 'packages/' folder (v2 layout)
+                  nuget restore $solution.FullName -NonInteractive
+                  # Alternatively (single toolchain path):
+                  # msbuild $solution.FullName -t:Restore -p:RestorePackagesConfig=true
+                } else {
+                  dotnet restore $solution.FullName
+                }
+
+                dotnet build $solution.FullName -c $env:CONFIGURATION --no-restore --nologo -m
               }
-            } else {
-              $projects = Get-ChildItem $repoPath -Recurse -Filter *.csproj -ErrorAction SilentlyContinue
-              if ($projects.Count -eq 0) {
-                Write-Host "No .sln or .csproj in $repoName — skipping build."
-              } else {
-                foreach ($p in $projects) {
-                  try {
-                    dotnet restore $p.FullName
-                    dotnet build   $p.FullName -c $env:CONFIGURATION --no-restore --nologo -m
-                  } catch {
-                    Write-Warning "Build FAILED for project '$($p.FullName)': $($_.Exception.Message)"
-                    $overallFailures += "$repoName ($($p.Name))"
+              else {
+                $projects = Get-ChildItem $repoPath -Recurse -Filter *.csproj -ErrorAction SilentlyContinue
+                if ($projects.Count -eq 0) {
+                  Write-Host "No .sln or .csproj in $repoName — skipping build."
+                } else {
+                  foreach ($p in $projects) {
+                    if ($usesPackagesConfig) {
+                      # When only projects are present, restore at repo root
+                      nuget restore $repoPath -NonInteractive
+                      # Or: msbuild $p.FullName -t:Restore -p:RestorePackagesConfig=true
+                    } else {
+                      dotnet restore $p.FullName
+                    }
+                    dotnet build $p.FullName -c $env:CONFIGURATION --no-restore --nologo -m
                   }
                 }
               }
+            }
+            catch {
+              Write-Warning "Build FAILED for '$repoName': $($_.Exception.Message)"
+              $overallFailures += "$repoName"
             }
 
             Write-Host "::endgroup::"
