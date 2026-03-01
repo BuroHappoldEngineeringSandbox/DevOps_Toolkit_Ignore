@@ -7,11 +7,9 @@ on:
       configuration:      { type: string,  default: "Release" }
       extra_repos:        { type: string,  default: "" }  # optional extras beyond Test_Toolkit
       token:              { type: string,  default: "" }
-      runner_project:
-        type: string
-        default: ""   # path to ComplianceRunnerApp.csproj in the caller repo (if present)
 
 jobs:
+  # Build all dependencies once (includes Test_Toolkit and its own deps)
   deps:
     permissions:
       contents: read
@@ -20,7 +18,7 @@ jobs:
       dotnet_version: ${{ inputs.dotnet_version }}
       configuration:  ${{ inputs.configuration }}
       token:          ${{ inputs.token }}
-      # Always include Test_Toolkit; callers can append more.
+      # Always include Test_Toolkit; callers can append more if needed
       extra_repos: |
         BHoM/Test_Toolkit
         ${{ inputs.extra_repos }}
@@ -37,7 +35,7 @@ jobs:
         shell: pwsh
 
     steps:
-      - name: Checkout (full history for diffs)
+      - name: Checkout caller (full history for diffs)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -59,22 +57,8 @@ jobs:
         with:
           source: "deps-assemblies"
 
-      # ----------------------- Build Compliance Runner -----------------------
-      # 1) If a runner project is provided in the caller repo, build it
-      - name: Build Compliance Runner (from caller repo)
-        id: build-runner-local
-        if: inputs.runner_project != ''
-        run: |
-          if (-not (Test-Path "${{ inputs.runner_project }}")) {
-            Write-Error "Runner project not found at: ${{ inputs.runner_project }}"
-            exit 1
-          }
-          dotnet publish "${{ inputs.runner_project }}" -c ${{ inputs.configuration }} -o out\runner
-
-      # 2) Otherwise, pull runner source from DevOps_Toolkit standard location and build
-        # (Assumes a project at tools/ComplianceRunnerApp/ComplianceRunnerApp.csproj)
+      # --- Build the runner from DevOps_Toolkit standard location ---
       - name: Checkout DevOps_Toolkit (runner source)
-        if: inputs.runner_project == ''
         uses: actions/checkout@v4
         with:
           repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
@@ -82,16 +66,15 @@ jobs:
           path: toolkit_repo
 
       - name: Build Compliance Runner (from DevOps_Toolkit)
-        if: inputs.runner_project == ''
         run: |
-          $proj = "toolkit_repo\tools\ComplianceRunnerApp\ComplianceRunnerApp.csproj"
+          $proj = "toolkit_repo\src\Compliance\ComplianceRunner\ComplianceRunner.csproj"
           if (-not (Test-Path $proj)) {
-            Write-Error "Compliance Runner project not found at $proj. Provide 'runner_project' input or add the runner to DevOps_Toolkit."
+            Write-Error "Compliance Runner project not found at $proj."
             exit 1
           }
           dotnet publish $proj -c ${{ inputs.configuration }} -o out\runner
 
-      # ----------------------- Diff & Run -----------------------
+      # --- Determine PR-changed *.cs files only ---
       - name: Compute changed C# files
         id: changed
         run: |
@@ -105,13 +88,23 @@ jobs:
           $count = ($files | Measure-Object).Count
           $files -join "`n" | Out-File changed_files.txt -Encoding utf8
           "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          if ($count -gt 0) {
+            Write-Host "Changed C# files:"
+            Get-Content changed_files.txt
+          } else {
+            Write-Host "No changed C# files detected."
+          }
 
+      # --- Run compliance on the delta; still upload SARIF if violations occur ---
       - name: Run Compliance Runner (PR delta)
         if: steps.changed.outputs.count != '0'
         run: |
           $sarif  = "compliance.sarif"
-          $runner = "out\runner\ComplianceRunnerApp.exe"
+          # Executable produced by the publish step above (adjust if your project outputs a different name)
+          $runner = "out\runner\ComplianceRunner.exe"
           if (-not (Test-Path $runner)) {
+            Write-Host "Publish contents:"
+            Get-ChildItem -Recurse out\runner | Select-Object FullName
             Write-Error "Runner exe not found at $runner"
             exit 1
           }
@@ -124,7 +117,7 @@ jobs:
             Copy-Item $src $dst -Force
           }
           & $runner "scan" --sarif $sarif
-          if ($LASTEXITCODE -ne 0) { Write-Host "Compliance violations detected." }
+          if ($LASTEXITCODE -ne 0) { Write-Host "Compliance violations detected (non-zero exit)." }
 
       - name: Upload SARIF (Code scanning)
         if: steps.changed.outputs.count != '0'
