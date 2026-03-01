@@ -1,13 +1,13 @@
-name: Clone & Build BHoM Dependencies
+name: Clone & Build BHoM Dependencies (Two-Phase)
 
 on:
   workflow_call:
     inputs:
       deps_file:      { type: string,  default: "dependencies.txt" }
-      extra_repos:    { type: string,  default: "" }
+      extra_repos:    { type: string,  default: "" }   # newline-separated owner/repo[@ref]
       dotnet_version: { type: string,  default: "10.x" }
       configuration:  { type: string,  default: "Release" }
-      token:          { type: string,  default: "" }
+      token:          { type: string,  default: "" }   # GitHub App token/PAT if private deps
 
 jobs:
   clone_build:
@@ -19,17 +19,21 @@ jobs:
         shell: pwsh
     env:
       CONFIGURATION: ${{ inputs.configuration }}
+      DEP_TOKEN: ${{ inputs.token != '' && inputs.token || github.token }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-dotnet@v4
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ inputs.dotnet_version }}
 
-      - uses: actions/cache@v4
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
         with:
           path: |
             ~/.nuget/packages
@@ -37,72 +41,254 @@ jobs:
           key: ${{ runner.os }}-nuget-${{ inputs.dotnet_version }}-${{ hashFiles('**/*.csproj','**/global.json','**/nuget.config') }}
           restore-keys: ${{ runner.os }}-nuget-${{ inputs.dotnet_version }}-
 
-      - name: Clone dependency graph
-        id: clone
-        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-dependency-graph@main
-        with:
-          token:       ${{ inputs.token != '' && inputs.token || github.token }}
-          deps_file:   ${{ inputs.deps_file }}
-          extra_repos: ${{ inputs.extra_repos }}
-          pr_branch:   ${{ github.event.pull_request.head.ref }}
-          base_branch: ${{ github.event.pull_request.base.ref }}
+      - name: Prepare folders
+        run: |
+          New-Item -ItemType Directory -Force -Path deps | Out-Null
+          New-Item -ItemType Directory -Force -Path deps-assemblies | Out-Null
+          New-Item -ItemType File -Force -Path deps/_shas.txt | Out-Null
+          if (Test-Path deps/_order.txt) { Remove-Item deps/_order.txt -Force }
 
-      - name: Compose cache key from SHAs
+      # ----------------------------------------------------------------
+      # Two-phase recursion:
+      #  Phase A: caller deps (in the exact order listed in deps_file)
+      #  Phase B: extra repo(s) deps (in their own listed order), then the extra repo itself
+      #  Merge: PhaseA order first, then PhaseB order, dedup (keep first)
+      # ----------------------------------------------------------------
+      - name: Clone dependency graphs (Phase A then Phase B) and compute order
+        id: clone_graph
+        env:
+          PR_BRANCH:   ${{ github.event.pull_request.head.ref }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+
+          $root     = (Get-Location).Path
+          $depsDir  = Join-Path $root 'deps'
+          $shaFile  = Join-Path $depsDir '_shas.txt'
+          $orderOut = Join-Path $depsDir '_order.txt'
+
+          function Lines([string]$path) {
+            if (Test-Path $path) {
+              return Get-Content $path |
+                Where-Object { $_ -and -not $_.Trim().StartsWith('#') } |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ -ne '' }
+            }
+            @()
+          }
+
+          function Parse-RepoSpec([string]$spec) {
+            $ref = $null
+            if ($spec.Contains('@')) {
+              $parts = $spec.Split('@',2)
+              $spec  = $parts[0].Trim()
+              $ref   = $parts[1].Trim()
+            }
+            return @{ Key = $spec; Ref = $ref } # owner/repo, ref
+          }
+
+          $Prefer   = $env:PR_BRANCH;   if (-not $Prefer)   { $Prefer   = 'feature/unknown' }
+          $Fallback = $env:BASE_BRANCH; if (-not $Fallback) { $Fallback = 'main' }
+
+          # Global de-dup of clones (owner/repo)
+          $cloned   = New-Object System.Collections.Generic.HashSet[string]
+          $nameMap  = @{}  # owner/repo -> folder name
+          $pathMap  = @{}  # owner/repo -> full path
+
+          function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
+            $parts = $ownerRepo.Split('/')
+            if ($parts.Count -ne 2) { return $null }
+            $name  = $parts[1]
+            $path  = Join-Path $depsDir $name
+
+            if (-not (Test-Path (Join-Path $path '.git'))) {
+              $url = "https://x-access-token:$env:DEP_TOKEN@github.com/$ownerRepo.git"
+              git clone $url $path --no-tags --depth 1 | Out-Null
+
+              Push-Location $path
+              $used = $false
+              if ($ref) {
+                $hasHead = git ls-remote --heads origin $ref
+                $hasTag  = git ls-remote --tags origin $ref
+                if ($hasHead -or $hasTag) {
+                  git fetch origin $ref --depth 1 | Out-Null
+                  git checkout -q $ref
+                  Write-Host "Checked out '$name' at explicit ref '$ref'"
+                  $used = $true
+                } else {
+                  Write-Warning "Explicit ref '$ref' not found on '$ownerRepo' — falling back."
+                }
+              }
+              if (-not $used) {
+                $hasPrefer = git ls-remote --heads origin $Prefer
+                if ($hasPrefer) {
+                  git fetch origin $Prefer --depth 1 | Out-Null
+                  git checkout -q $Prefer
+                  Write-Host "Checked out '$name' on '$Prefer'"
+                } else {
+                  git fetch origin $Fallback --depth 1 | Out-Null
+                  git checkout -q $Fallback
+                  Write-Host "Branch '$Prefer' not found on '$name' — fell back to '$Fallback'"
+                }
+              }
+
+              $sha = (git rev-parse HEAD).Trim()
+              # Record SHA as owner/repo SHA (unambiguous for cache keys)
+              Add-Content -Path $shaFile -Value "$ownerRepo $sha"
+              Pop-Location
+            }
+
+            $nameMap[$ownerRepo] = $name
+            $pathMap[$ownerRepo] = $path
+            return @{ Key=$ownerRepo; Name=$name; Path=$path }
+          }
+
+          # Phase helper: walk a repo's deps_file in listed order (depth-first),
+          # yielding a phase-local ordered list of owner/repo (deps first, then the seed repo if requested).
+          function Build-Chain([string]$ownerRepo, [bool]$includeSelf = $false, [string]$ref = $null) {
+            $chain = New-Object System.Collections.Generic.List[string]
+
+            # Ensure the repo is cloned (once globally)
+            if (-not $cloned.Contains($ownerRepo)) {
+              $cloned.Add($ownerRepo) | Out-Null
+              $repo = Clone-And-Checkout $ownerRepo $ref
+            } else {
+              $parts = $ownerRepo.Split('/')
+              if (-not $nameMap.ContainsKey($ownerRepo)) { $nameMap[$ownerRepo] = $parts[1] }
+              if (-not $pathMap.ContainsKey($ownerRepo)) { $pathMap[$ownerRepo] = Join-Path $depsDir $parts[1] }
+            }
+
+            $repoPath = $pathMap[$ownerRepo]
+            $depsFile = Join-Path $repoPath 'dependencies.txt'
+
+            if (Test-Path $depsFile) {
+              # IMPORTANT: listed order means "build these first, in this order"
+              foreach ($line in (Lines $depsFile)) {
+                $p = Parse-RepoSpec $line
+                # Recurse first (ensures child's deps before child)
+                $childList = Build-Chain $p.Key $true $p.Ref
+                foreach ($c in $childList) { $chain.Add($c) | Out-Null }
+              }
+            }
+
+            if ($includeSelf) { $chain.Add($ownerRepo) | Out-Null }
+            return ,$chain
+          }
+
+          # ----------------- Phase A -----------------
+          Write-Host "----- PHASE A: Caller dependencies from ${{ inputs.deps_file }} -----"
+          $phaseA = New-Object System.Collections.Generic.List[string]
+          $seedsA = Lines "${{ inputs.deps_file }}"
+          foreach ($seed in $seedsA) {
+            $sp = Parse-RepoSpec $seed
+            # Build the seed chain (deps first, then the seed), but for Phase A we DO NOT include the seed repo itself
+            # because the caller repo is being built outside this reusable builder.
+            $chain = Build-Chain $sp.Key $true $sp.Ref
+            foreach ($item in $chain) { if (-not $phaseA.Contains($item)) { $phaseA.Add($item) | Out-Null } }
+          }
+          if ($phaseA.Count -eq 0) { Write-Host "(none)" } else { $phaseA | ForEach-Object { Write-Host "A: $_" } }
+
+          # ----------------- Phase B -----------------
+          Write-Host "----- PHASE B: Extra repos + their own dependencies -----"
+          $phaseB = New-Object System.Collections.Generic.List[string]
+          if ("${{ inputs.extra_repos }}") {
+            $seedsB = @("${{ inputs.extra_repos }}".Split("`n")) |
+              ForEach-Object { $_.Trim() } |
+              Where-Object { $_ -ne '' -and -not $_.StartsWith('#') }
+
+            foreach ($seed in $seedsB) {
+              $sp = Parse-RepoSpec $seed
+              # For Phase B we include the seed repo itself AFTER its deps
+              $chain = Build-Chain $sp.Key $true $sp.Ref
+              foreach ($item in $chain) { if (-not $phaseB.Contains($item)) { $phaseB.Add($item) | Out-Null } }
+              Write-Host "B (seed): $($sp.Key)"
+            }
+          } else {
+            Write-Host "(none)"
+          }
+
+          # --------------- Merge orders ---------------
+          $seen  = New-Object System.Collections.Generic.HashSet[string]
+          $merged= New-Object System.Collections.Generic.List[string]
+
+          foreach ($k in $phaseA + $phaseB) {
+            if (-not $seen.Contains($k)) { $seen.Add($k) | Out-Null; $merged.Add($k) | Out-Null }
+          }
+
+          # Map owner/repo -> folder name for build step output
+          $folderOrder = $merged | ForEach-Object {
+            if ($nameMap.ContainsKey($_)) { $nameMap[$_] } else { ($_ -split '/')[1] }
+          }
+          $folderOrder | Set-Content -Path $orderOut -Encoding utf8
+
+          Write-Host "== Final build order (Phase A then Phase B, de-duped) =="
+          Get-Content $orderOut | ForEach-Object { Write-Host " - $_" }
+
+      - name: Compute composite cache key from dependency SHAs
         id: shas
         run: |
-          if(-not (Test-Path 'deps/_shas.txt')){"keypart=" >> $env:GITHUB_OUTPUT; exit 0}
-          $keypart=(Get-Content 'deps/_shas.txt' | ?{$_ -match '\S+\s+[0-9a-f]+'} | sort | %{
-            $t=$_.Trim() -split '\s+'; "$($t[0])@$($t[1])"}) -join ';'
-          "keypart=$keypart" >> $env:GITHUB_OUTPUT
+          if (-not (Test-Path 'deps/_shas.txt')) {
+            Write-Host "No dependency SHAs recorded — using empty key."
+            "keypart=" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            exit 0
+          }
+          $pairs = Get-Content 'deps/_shas.txt' | Where-Object { $_ -match '\S+\s+[0-9a-f]+' }
+          $keypart = ($pairs | Sort-Object | ForEach-Object {
+            $t = $_.Trim() -split '\s+'
+            "$($t[0])@$($t[1])"
+          }) -join ';'
+          "keypart=$keypart" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - uses: actions/cache@v4
+      - name: Restore cache (deps-assemblies)
         id: cache
+        uses: actions/cache@v4
         with:
           path: deps-assemblies
           key: depsasm-${{ runner.os }}-${{ inputs.dotnet_version }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
 
       - name: Build dependencies (on cache miss)
         if: steps.cache.outputs.cache-hit != 'true'
-        shell: pwsh
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
 
+          $depsDir   = "deps"
+          $orderOut  = Join-Path $depsDir "_order.txt"
           $overallFailures = @()
 
-          # Iterate each cloned dependency repo
-          Get-ChildItem "deps" -Directory | ForEach-Object {
-            $repoPath = $_.FullName
-            $repoName = $_.Name
+          if (-not (Test-Path $orderOut)) {
+            Write-Warning "No build order file found; falling back to directory enumeration."
+            $order = (Get-ChildItem $depsDir -Directory | Select-Object -ExpandProperty Name)
+          } else {
+            $order = Get-Content $orderOut
+          }
+
+          foreach ($repoName in $order) {
+            $repoPath = Join-Path $depsDir $repoName
+            if (-not (Test-Path $repoPath)) { continue }
+
             Write-Host "::group::Building $repoName"
 
-            # Prefer a solution if one exists; otherwise enumerate all csproj files
             $solution = Get-ChildItem $repoPath -Recurse -Filter *.sln -ErrorAction SilentlyContinue | Select-Object -First 1
-            $projects = @()
             if ($null -ne $solution) {
-              Write-Host "Found solution: $($solution.FullName)"
               try {
                 dotnet restore $solution.FullName
                 dotnet build   $solution.FullName -c $env:CONFIGURATION --no-restore --nologo -m
-              }
-              catch {
+              } catch {
                 Write-Warning "Build FAILED for solution '$($solution.FullName)': $($_.Exception.Message)"
                 $overallFailures += "$repoName (sln)"
               }
-            }
-            else {
+            } else {
               $projects = Get-ChildItem $repoPath -Recurse -Filter *.csproj -ErrorAction SilentlyContinue
               if ($projects.Count -eq 0) {
-                Write-Host "No .sln or .csproj found in $repoName — skipping build."
-              }
-              else {
+                Write-Host "No .sln or .csproj in $repoName — skipping build."
+              } else {
                 foreach ($p in $projects) {
-                  Write-Host "Project: $($p.FullName)"
                   try {
                     dotnet restore $p.FullName
                     dotnet build   $p.FullName -c $env:CONFIGURATION --no-restore --nologo -m
-                  }
-                  catch {
+                  } catch {
                     Write-Warning "Build FAILED for project '$($p.FullName)': $($_.Exception.Message)"
                     $overallFailures += "$repoName ($($p.Name))"
                   }
@@ -113,23 +299,22 @@ jobs:
             Write-Host "::endgroup::"
           }
 
-          # Collect built DLLs (even if some repos failed)
           if(-not (Test-Path "deps-assemblies")){ New-Item -ItemType Directory -Force -Path "deps-assemblies" | Out-Null }
           Get-ChildItem "deps" -Recurse -Filter *.dll -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "\\bin\\$($env:CONFIGURATION)\\" } |
             ForEach-Object { Copy-Item $_.FullName "deps-assemblies" -Force }
 
-          Write-Host ""
           Write-Host "Collected assemblies (sample):"
           Get-ChildItem "deps-assemblies" -Filter *.dll -ErrorAction SilentlyContinue |
             Sort-Object Name | Select-Object -First 60 | ForEach-Object { $_.Name }
 
-          # If you want the job to fail when any repo failed to build, uncomment below:
+          # Optional: fail the job if any repo failed to build
           # if ($overallFailures.Count -gt 0) {
           #   Write-Error ("One or more dependency builds failed:`n - " + ($overallFailures -join "`n - "))
           # }
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload dependency assemblies
+        uses: actions/upload-artifact@v4
         with:
           name: deps-assemblies
           path: deps-assemblies/**

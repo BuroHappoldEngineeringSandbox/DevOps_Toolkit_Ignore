@@ -5,100 +5,79 @@ on:
     inputs:
       dotnet_version:     { type: string,  default: "10.x" }
       configuration:      { type: string,  default: "Release" }
-      # Optional additional repos (newline-separated) a caller may want to add.
-      extra_repos:        { type: string,  default: "" }
-      # Only needed if any extra repo is private; not required for BHoM/Test_Toolkit (public).
+      extra_repos:        { type: string,  default: "" }  # optional extras beyond Test_Toolkit
       token:              { type: string,  default: "" }
 
 jobs:
-  # 1) Build all deps + Test_Toolkit in a single pass
   deps:
     permissions:
       contents: read
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/deps.yml@main
     with:
-      dotnet_version:   ${{ inputs.dotnet_version }}
-      configuration:    ${{ inputs.configuration }}
-      token:            ${{ inputs.token }}
-      # 👇 Always include Test_Toolkit. If callers pass more, we append them.
+      dotnet_version: ${{ inputs.dotnet_version }}
+      configuration:  ${{ inputs.configuration }}
+      token:          ${{ inputs.token }}
+      # Always include Test_Toolkit; callers can append more.
       extra_repos: |
         BHoM/Test_Toolkit
         ${{ inputs.extra_repos }}
 
-  # 2) Run Compliance on changed C# files and upload SARIF
   compliance:
     runs-on: windows-latest
     needs: deps
     permissions:
       contents: read
       pull-requests: read
-      security-events: write   # required for SARIF upload (Code scanning)
+      security-events: write
     defaults:
       run:
         shell: pwsh
 
     steps:
-      - name: Checkout (full history for diffs)
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ inputs.dotnet_version }}
 
-      - name: Download dependency assemblies
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: deps-assemblies
           path: deps-assemblies
         continue-on-error: true
 
-      - name: Stage assemblies to ProgramData\BHoM\Assemblies
+      - name: Stage assemblies
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
         with:
           source: "deps-assemblies"
 
-      # Build the Compliance Runner (adjust path if your project lives elsewhere)
       - name: Build Compliance Runner
         run: |
           dotnet publish .\src\ComplianceRunnerApp\ComplianceRunnerApp.csproj `
             -c ${{ inputs.configuration }} `
             -o out\runner
 
-      # Determine changed *.cs files in this PR only
       - name: Compute changed C# files
         id: changed
         run: |
           if ("${{ github.event_name }}" -ne "pull_request") {
-            Write-Host "Not a PR event; nothing to do."
             "count=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
-
           git fetch origin ${{ github.base_ref }}
           $files = git diff --name-only --diff-filter=ACMRT origin/${{ github.base_ref }}...HEAD |
                    Where-Object { $_.ToLower().EndsWith(".cs") }
-
           $count = ($files | Measure-Object).Count
           $files -join "`n" | Out-File changed_files.txt -Encoding utf8
           "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-          if ($count -gt 0) {
-            Write-Host "Changed C# files:"
-            Get-Content changed_files.txt
-          } else {
-            Write-Host "No changed C# files detected."
-          }
-
       - name: Run Compliance Runner (PR delta)
         if: steps.changed.outputs.count != '0'
         run: |
-          $sarif   = "compliance.sarif"
-          $runner  = "out\runner\ComplianceRunnerApp.exe"
-
-          # Scan only the changed files: mirror them into a temp 'scan' folder
+          $sarif  = "compliance.sarif"
+          $runner = "out\runner\ComplianceRunnerApp.exe"
           New-Item -ItemType Directory -Force -Path scan | Out-Null
           Get-Content changed_files.txt | ForEach-Object {
             $src = $_
@@ -106,11 +85,8 @@ jobs:
             New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
             Copy-Item $src $dst -Force
           }
-
           & $runner "scan" --sarif $sarif
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "Compliance violations detected (non-zero exit)."
-          }
+          if ($LASTEXITCODE -ne 0) { Write-Host "Compliance violations detected." }
 
       - name: Upload SARIF (Code scanning)
         if: steps.changed.outputs.count != '0'
