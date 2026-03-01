@@ -58,7 +58,7 @@ jobs:
 
       - name: Build Compliance Runner
         run: |
-          dotnet publish .\src\ComplianceRunner\ComplianceRunner.csproj `
+          dotnet publish .\src\Compliance\ComplianceRunner\ComplianceRunner.csproj `
             -c ${{ inputs.configuration }} `
             -o out\runner
 
