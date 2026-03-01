@@ -24,7 +24,7 @@ on:
         type: string
         default: "Release"
       token:
-        description: "Token for cloning private repos (PAT preferred). Falls back to GITHUB_TOKEN."
+        description: "Token for cloning private repos (PAT/GitHub App/deploy key). Falls back to GITHUB_TOKEN."
         required: false
         type: string
         default: ""
@@ -35,11 +35,12 @@ jobs:
     env:
       CONFIGURATION: ${{ inputs.configuration }}
       DEP_TOKEN: ${{ inputs.token != '' && inputs.token || github.token }}
+
     steps:
       - name: Checkout caller repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
@@ -51,12 +52,13 @@ jobs:
         run: |
           mkdir -Force deps | Out-Null
           mkdir -Force deps-assemblies | Out-Null
+          New-Item -ItemType File -Force -Path deps/_shas.txt | Out-Null
 
-      - name: Clone, branch-fallback, recurse, build, collect
-        id: builddeps
+      # --- Clone all dependencies (recursively) and record exact SHAs
+      - name: Clone dependencies (Prefer PR branch; fallback to base)
+        id: clone_deps
         shell: pwsh
         env:
-          # Prefer PR context when available (pull_request events)
           PR_BRANCH: ${{ github.event.pull_request.head.ref }}
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
         run: |
@@ -73,31 +75,31 @@ jobs:
             @()
           }
 
-          # Initial seed set from deps_file + optional extra_repos
+          $root = (Get-Location).Path
+          $shaFile = Join-Path $root 'deps/_shas.txt'
+
+          # Seed dependencies from file + extra_repos
           $seeds = @()
           $df = "${{ inputs.deps_file }}"
           $seeds += Get-ListFromFileOrEmpty $df
-
           if ("${{ inputs.extra_repos }}") {
             $extra = @("${{ inputs.extra_repos }}".Split("`n")) |
               ForEach-Object { $_.Trim() } |
               Where-Object { $_ -ne '' -and -not $_.StartsWith('#') }
             $seeds += $extra
           }
-
           if ($seeds.Count -eq 0) {
             Write-Host "No dependencies listed in '$df' and no extra_repos supplied — skipping."
             exit 0
           }
 
-          # PR-aware branch selection defaults (for non-PR runs, these are fallbacks)
-          $Prefer = $env:PR_BRANCH
+          # Determine prefer/fallback branches
+          $Prefer   = $env:PR_BRANCH
           $Fallback = $env:BASE_BRANCH
-          if (-not $Prefer)   { $Prefer   = 'feature/unknown' } # likely absent on most repos in non-PR
+          if (-not $Prefer)   { $Prefer   = 'feature/unknown' }
           if (-not $Fallback) { $Fallback = 'main' }
 
-          # Dedup tracking (mirrors legacy m_BuiltRepos to avoid rebuilds)
-          $built = New-Object System.Collections.Generic.HashSet[string]
+          $cloned = New-Object System.Collections.Generic.HashSet[string]
 
           function Clone-And-Checkout([string]$ownerRepo) {
             $parts = $ownerRepo.Split('/')
@@ -112,10 +114,10 @@ jobs:
 
             $url = "https://x-access-token:$env:DEP_TOKEN@github.com/$ownerRepo.git"
             git clone $url "deps/$name" --no-tags --depth 1
+
             Push-Location "deps/$name"
 
-            # Prefer PR head if exists on this repo, else base (legacy 'CheckoutBranch' parity)
-            $hasPrefer = [bool](git ls-remote --heads origin $Prefer)
+            $hasPrefer = git ls-remote --heads origin $Prefer
             if ($hasPrefer) {
               git fetch origin $Prefer --depth 1
               git checkout -q $Prefer
@@ -126,15 +128,18 @@ jobs:
               Write-Host "Branch '$Prefer' not found on '$name' — fell back to '$Fallback'"
             }
 
+            $sha = (git rev-parse HEAD).Trim()
+            Add-Content -Path $shaFile -Value "$name $sha"
+
             Pop-Location
             return $name
           }
 
-          function Recurse-And-Build([string]$ownerRepo) {
+          function Recurse([string]$ownerRepo) {
             $name = Clone-And-Checkout $ownerRepo
             if (-not $name) { return }
-            if ($built.Contains($name)) { return }
-            $built.Add($name) | Out-Null
+            if ($cloned.Contains($name)) { return }
+            $cloned.Add($name) | Out-Null
 
             $depFile = "deps/$name/dependencies.txt"
             if (Test-Path $depFile) {
@@ -142,30 +147,60 @@ jobs:
                 Where-Object { $_ -and -not $_.Trim().StartsWith('#') } |
                 ForEach-Object { $_.Trim() } |
                 Where-Object { $_ -ne '' } |
-                ForEach-Object { Recurse-And-Build $_ }
+                ForEach-Object { Recurse $_ }
             }
+          }
 
+          foreach ($r in $seeds) { Recurse $r }
+
+      # --- Compose cache key from exact dependency SHAs (+ SDK + Config + OS)
+      - name: Compute composite cache key from dependency SHAs
+        id: shas
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'deps/_shas.txt')) {
+            Write-Host "No dependency SHAs recorded — using empty key."
+            "keypart=" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            exit 0
+          }
+          $pairs = Get-Content 'deps/_shas.txt' | Where-Object { $_ -match '\S+\s+[0-9a-f]+' }
+          $keypart = ($pairs | Sort-Object | ForEach-Object {
+            $t = $_.Trim() -split '\s+'
+            "$($t[0])@$($t[1])"
+          }) -join ';'
+          "keypart=$keypart" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Restore cache (deps-assemblies)
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: deps-assemblies
+          key: depsasm-${{ runner.os }}-${{ inputs.dotnet_version }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
+
+      # --- Build dependencies only if we missed the cache
+      - name: Build dependencies (only if cache miss)
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+
+          # Build each dependency repo and collect DLLs
+          Get-ChildItem "deps" -Directory | ForEach-Object {
+            $name = $_.Name
             Write-Host "::group::Building $name"
             dotnet build "deps/$name" -c $env:CONFIGURATION
             Write-Host "::endgroup::"
-
-            # Collect DLLs from the repo's build output (current config only)
-            Get-ChildItem "deps/$name" -Recurse -Filter *.dll -ErrorAction SilentlyContinue |
-              Where-Object { $_.FullName -match "\\bin\\$($env:CONFIGURATION)\\" } |
-              ForEach-Object { Copy-Item $_.FullName "deps-assemblies" -Force }
           }
 
-          foreach ($r in $seeds) { Recurse-And-Build $r }
+          if (-not (Test-Path "deps-assemblies")) { mkdir -Force "deps-assemblies" | Out-Null }
+          Get-ChildItem "deps" -Recurse -Filter *.dll -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "\\bin\\$($env:CONFIGURATION)\\" } |
+            ForEach-Object { Copy-Item $_.FullName "deps-assemblies" -Force }
 
-          Write-Host "Collected assemblies:"
-          if (Test-Path "deps-assemblies") {
-            Get-ChildItem "deps-assemblies" -Filter *.dll |
-              Sort-Object Name |
-              Select-Object -First 60 |
-              ForEach-Object { $_.Name }
-          } else {
-            Write-Host "(none)"
-          }
+          Write-Host "Collected assemblies (sample):"
+          Get-ChildItem "deps-assemblies" -Filter *.dll -ErrorAction SilentlyContinue |
+            Sort-Object Name | Select-Object -First 60 | ForEach-Object { $_.Name }
 
       - name: Upload dependency assemblies
         uses: actions/upload-artifact@v4
