@@ -5,8 +5,7 @@ on:
     inputs:
       dotnet_version:     { type: string,  default: "10.x" }
       configuration:      { type: string,  default: "Release" }
-      # Provide additional repos to build alongside the caller's dependencies.
-      # We'll inject BHoM/Test_Toolkit here from the caller or leave default.
+      # Optional additional repos (newline-separated) a caller may want to add.
       extra_repos:        { type: string,  default: "" }
       # Only needed if any extra repo is private; not required for BHoM/Test_Toolkit (public).
       token:              { type: string,  default: "" }
@@ -21,7 +20,7 @@ jobs:
       dotnet_version:   ${{ inputs.dotnet_version }}
       configuration:    ${{ inputs.configuration }}
       token:            ${{ inputs.token }}
-      # Build the caller's graph from dependencies.txt plus Test_Toolkit explicitly.
+      # 👇 Always include Test_Toolkit. If callers pass more, we append them.
       extra_repos: |
         BHoM/Test_Toolkit
         ${{ inputs.extra_repos }}
@@ -99,7 +98,7 @@ jobs:
           $sarif   = "compliance.sarif"
           $runner  = "out\runner\ComplianceRunnerApp.exe"
 
-          # To scan only changed files, mirror them into a temp 'scan' folder
+          # Scan only the changed files: mirror them into a temp 'scan' folder
           New-Item -ItemType Directory -Force -Path scan | Out-Null
           Get-Content changed_files.txt | ForEach-Object {
             $src = $_
