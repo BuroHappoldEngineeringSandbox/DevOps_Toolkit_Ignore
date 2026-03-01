@@ -63,14 +63,71 @@ jobs:
 
       - name: Build dependencies (on cache miss)
         if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
         run: |
-          Get-ChildItem "deps" -Directory | %{
-            dotnet build $_.FullName -c $env:CONFIGURATION | Out-Null
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+
+          $overallFailures = @()
+
+          # Iterate each cloned dependency repo
+          Get-ChildItem "deps" -Directory | ForEach-Object {
+            $repoPath = $_.FullName
+            $repoName = $_.Name
+            Write-Host "::group::Building $repoName"
+
+            # Prefer a solution if one exists; otherwise enumerate all csproj files
+            $solution = Get-ChildItem $repoPath -Recurse -Filter *.sln -ErrorAction SilentlyContinue | Select-Object -First 1
+            $projects = @()
+            if ($null -ne $solution) {
+              Write-Host "Found solution: $($solution.FullName)"
+              try {
+                dotnet restore $solution.FullName
+                dotnet build   $solution.FullName -c $env:CONFIGURATION --no-restore --nologo -m
+              }
+              catch {
+                Write-Warning "Build FAILED for solution '$($solution.FullName)': $($_.Exception.Message)"
+                $overallFailures += "$repoName (sln)"
+              }
+            }
+            else {
+              $projects = Get-ChildItem $repoPath -Recurse -Filter *.csproj -ErrorAction SilentlyContinue
+              if ($projects.Count -eq 0) {
+                Write-Host "No .sln or .csproj found in $repoName — skipping build."
+              }
+              else {
+                foreach ($p in $projects) {
+                  Write-Host "Project: $($p.FullName)"
+                  try {
+                    dotnet restore $p.FullName
+                    dotnet build   $p.FullName -c $env:CONFIGURATION --no-restore --nologo -m
+                  }
+                  catch {
+                    Write-Warning "Build FAILED for project '$($p.FullName)': $($_.Exception.Message)"
+                    $overallFailures += "$repoName ($($p.Name))"
+                  }
+                }
+              }
+            }
+
+            Write-Host "::endgroup::"
           }
-          if(-not (Test-Path "deps-assemblies")){ mkdir -Force "deps-assemblies" | Out-Null }
-          Get-ChildItem "deps" -Recurse -Filter *.dll -EA SilentlyContinue |
-            ?{ $_.FullName -match "\\bin\\$($env:CONFIGURATION)\\" } |
-            % { Copy-Item $_.FullName "deps-assemblies" -Force }
+
+          # Collect built DLLs (even if some repos failed)
+          if(-not (Test-Path "deps-assemblies")){ New-Item -ItemType Directory -Force -Path "deps-assemblies" | Out-Null }
+          Get-ChildItem "deps" -Recurse -Filter *.dll -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "\\bin\\$($env:CONFIGURATION)\\" } |
+            ForEach-Object { Copy-Item $_.FullName "deps-assemblies" -Force }
+
+          Write-Host ""
+          Write-Host "Collected assemblies (sample):"
+          Get-ChildItem "deps-assemblies" -Filter *.dll -ErrorAction SilentlyContinue |
+            Sort-Object Name | Select-Object -First 60 | ForEach-Object { $_.Name }
+
+          # If you want the job to fail when any repo failed to build, uncomment below:
+          # if ($overallFailures.Count -gt 0) {
+          #   Write-Error ("One or more dependency builds failed:`n - " + ($overallFailures -join "`n - "))
+          # }
 
       - uses: actions/upload-artifact@v4
         with:
