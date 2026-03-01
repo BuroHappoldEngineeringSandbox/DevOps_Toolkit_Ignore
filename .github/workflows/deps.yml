@@ -1,0 +1,80 @@
+name: Clone & Build BHoM Dependencies
+
+on:
+  workflow_call:
+    inputs:
+      deps_file:      { type: string,  default: "dependencies.txt" }
+      extra_repos:    { type: string,  default: "" }
+      dotnet_version: { type: string,  default: "10.x" }
+      configuration:  { type: string,  default: "Release" }
+      token:          { type: string,  default: "" }
+
+jobs:
+  clone_build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CONFIGURATION: ${{ inputs.configuration }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.nuget/packages
+            ~\AppData\Local\Microsoft\MSBuild\Cache
+          key: ${{ runner.os }}-nuget-${{ inputs.dotnet_version }}-${{ hashFiles('**/*.csproj','**/global.json','**/nuget.config') }}
+          restore-keys: ${{ runner.os }}-nuget-${{ inputs.dotnet_version }}-
+
+      - name: Clone dependency graph
+        id: clone
+        uses: ./.github/actions/bhom-dependency-graph
+        with:
+          token:       ${{ inputs.token != '' && inputs.token || github.token }}
+          deps_file:   ${{ inputs.deps_file }}
+          extra_repos: ${{ inputs.extra_repos }}
+          pr_branch:   ${{ github.event.pull_request.head.ref }}
+          base_branch: ${{ github.event.pull_request.base.ref }}
+
+      - name: Compose cache key from SHAs
+        id: shas
+        run: |
+          if(-not (Test-Path 'deps/_shas.txt')){"keypart=" >> $env:GITHUB_OUTPUT; exit 0}
+          $keypart=(Get-Content 'deps/_shas.txt' | ?{$_ -match '\S+\s+[0-9a-f]+'} | sort | %{
+            $t=$_.Trim() -split '\s+'; "$($t[0])@$($t[1])"}) -join ';'
+          "keypart=$keypart" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: deps-assemblies
+          key: depsasm-${{ runner.os }}-${{ inputs.dotnet_version }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
+
+      - name: Build dependencies (on cache miss)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          Get-ChildItem "deps" -Directory | %{
+            dotnet build $_.FullName -c $env:CONFIGURATION | Out-Null
+          }
+          if(-not (Test-Path "deps-assemblies")){ mkdir -Force "deps-assemblies" | Out-Null }
+          Get-ChildItem "deps" -Recurse -Filter *.dll -EA SilentlyContinue |
+            ?{ $_.FullName -match "\\bin\\$($env:CONFIGURATION)\\" } |
+            % { Copy-Item $_.FullName "deps-assemblies" -Force }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deps-assemblies
+          path: deps-assemblies/**
+          retention-days: 7
+          if-no-files-found: warn
