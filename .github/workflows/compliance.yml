@@ -7,6 +7,9 @@ on:
       configuration:      { type: string,  default: "Release" }
       extra_repos:        { type: string,  default: "" }  # optional extras beyond Test_Toolkit
       token:              { type: string,  default: "" }
+      runner_project:
+        type: string
+        default: ""   # path to ComplianceRunnerApp.csproj in the caller repo (if present)
 
 jobs:
   deps:
@@ -56,12 +59,39 @@ jobs:
         with:
           source: "deps-assemblies"
 
-      - name: Build Compliance Runner
+      # ----------------------- Build Compliance Runner -----------------------
+      # 1) If a runner project is provided in the caller repo, build it
+      - name: Build Compliance Runner (from caller repo)
+        id: build-runner-local
+        if: inputs.runner_project != ''
         run: |
-          dotnet publish .\src\Compliance\ComplianceRunner\ComplianceRunner.csproj `
-            -c ${{ inputs.configuration }} `
-            -o out\runner
+          if (-not (Test-Path "${{ inputs.runner_project }}")) {
+            Write-Error "Runner project not found at: ${{ inputs.runner_project }}"
+            exit 1
+          }
+          dotnet publish "${{ inputs.runner_project }}" -c ${{ inputs.configuration }} -o out\runner
 
+      # 2) Otherwise, pull runner source from DevOps_Toolkit standard location and build
+        # (Assumes a project at tools/ComplianceRunnerApp/ComplianceRunnerApp.csproj)
+      - name: Checkout DevOps_Toolkit (runner source)
+        if: inputs.runner_project == ''
+        uses: actions/checkout@v4
+        with:
+          repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
+          ref: main
+          path: toolkit_repo
+
+      - name: Build Compliance Runner (from DevOps_Toolkit)
+        if: inputs.runner_project == ''
+        run: |
+          $proj = "toolkit_repo\tools\ComplianceRunnerApp\ComplianceRunnerApp.csproj"
+          if (-not (Test-Path $proj)) {
+            Write-Error "Compliance Runner project not found at $proj. Provide 'runner_project' input or add the runner to DevOps_Toolkit."
+            exit 1
+          }
+          dotnet publish $proj -c ${{ inputs.configuration }} -o out\runner
+
+      # ----------------------- Diff & Run -----------------------
       - name: Compute changed C# files
         id: changed
         run: |
@@ -80,7 +110,12 @@ jobs:
         if: steps.changed.outputs.count != '0'
         run: |
           $sarif  = "compliance.sarif"
-          $runner = "out\runner\ComplianceRunner.exe"
+          $runner = "out\runner\ComplianceRunnerApp.exe"
+          if (-not (Test-Path $runner)) {
+            Write-Error "Runner exe not found at $runner"
+            exit 1
+          }
+
           New-Item -ItemType Directory -Force -Path scan | Out-Null
           Get-Content changed_files.txt | ForEach-Object {
             $src = $_
