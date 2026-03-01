@@ -39,7 +39,7 @@ jobs:
 
       - name: Clone dependency graph
         id: clone
-        uses: ./.github/actions/bhom-dependency-graph
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-dependency-graph@main
         with:
           token:       ${{ inputs.token != '' && inputs.token || github.token }}
           deps_file:   ${{ inputs.deps_file }}
