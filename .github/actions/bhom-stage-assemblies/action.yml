@@ -1,0 +1,31 @@
+name: "BHoM Stage Assemblies"
+description: "Copy dependency DLLs into ProgramData/BHoM/Assemblies"
+
+inputs:
+  source:
+    description: "Directory containing dependency assemblies"
+    required: true
+  configuration:
+    description: "Configuration (Release/Debug) — optional"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Stage assemblies
+      shell: pwsh
+      run: |
+        $src = "${{ inputs.source }}"
+        if (-not (Test-Path $src)) {
+          Write-Host "⚠ No assemblies found at: $src"
+          exit 0
+        }
+
+        $dst = Join-Path $env:ProgramData "BHoM\Assemblies"
+        New-Item -ItemType Directory -Force -Path $dst | Out-Null
+        
+        Copy-Item "$src\*.dll" $dst -Force -ErrorAction SilentlyContinue
+
+        Write-Host "📦 Staged assemblies into $dst"
+        Get-ChildItem $dst -Filter *.dll | Sort-Object Name

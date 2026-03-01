@@ -58,11 +58,10 @@ jobs:
           path: deps-assemblies
         continue-on-error: true
 
-      - name: Stage deps to ProgramData\BHoM\Assemblies
-        run: |
-          $dst = Join-Path $env:ProgramData "BHoM\Assemblies"
-          New-Item -ItemType Directory -Force -Path $dst | Out-Null
-          if (Test-Path "deps-assemblies") { Copy-Item "deps-assemblies\*.dll" $dst -Force }
+      - name: Stage assemblies
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
+        with:
+            source: "deps-assemblies"
 
       - name: Verify test solution
         run: |
