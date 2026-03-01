@@ -58,7 +58,7 @@ jobs:
 
       - name: Build Compliance Runner
         run: |
-          dotnet publish .\src\ComplianceRunnerApp\ComplianceRunnerApp.csproj `
+          dotnet publish .\src\ComplianceRunner\ComplianceRunner.csproj `
             -c ${{ inputs.configuration }} `
             -o out\runner
 
@@ -80,7 +80,7 @@ jobs:
         if: steps.changed.outputs.count != '0'
         run: |
           $sarif  = "compliance.sarif"
-          $runner = "out\runner\ComplianceRunnerApp.exe"
+          $runner = "out\runner\ComplianceRunner.exe"
           New-Item -ItemType Directory -Force -Path scan | Out-Null
           Get-Content changed_files.txt | ForEach-Object {
             $src = $_
