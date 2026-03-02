@@ -92,6 +92,7 @@ runs:
       with:
         path: deps-assemblies
         key: depsasm-${{ inputs.dotnet_version }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
+        enableCrossOsArchive: true
 
     - name: Build dependencies (if cache miss)
       if: steps.cache.outputs.cache-hit != 'true'

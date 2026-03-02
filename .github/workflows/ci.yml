@@ -40,6 +40,7 @@ jobs:
             ~\AppData\Local\Microsoft\MSBuild\Cache
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj','**/global.json','**/nuget.config') }}
           restore-keys: ${{ runner.os }}-nuget-
+          enableCrossOsArchive: true
 
       # --- NEW: resolve and build dependencies using the composite action (runs in this job) ---
       - name: Resolve Dependencies
