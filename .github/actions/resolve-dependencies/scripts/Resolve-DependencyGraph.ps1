@@ -35,12 +35,14 @@ function Parse-RepoSpec([string]$spec) {
     return @{ Key=$spec; Ref=$ref }
 }
 
+# Branch selection (PR branch preferred; fallback to base or main)
 $Prefer   = $env:PR_BRANCH
 if (-not $Prefer -or $Prefer -eq "") { $Prefer = "feature/unknown" }
 
 $Fallback = $env:BASE_BRANCH
 if (-not $Fallback -or $Fallback -eq "") { $Fallback = "main" }
 
+# Track cloned repos and folder mapping
 $cloned  = New-Object System.Collections.Generic.HashSet[string]
 $nameMap = @{}
 $pathMap = @{}
@@ -96,6 +98,7 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
         Add-Content -Path $shaFile -Value "$ownerRepo $sha"
         Add-Content -Path $selectFile -Value "$ownerRepo|$name|$selectedRef|$sha"
 
+        # Remove token from remote
         git remote set-url origin "https://github.com/$ownerRepo.git" | Out-Null
         Pop-Location
     }
@@ -108,7 +111,7 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
 
 function Build-Chain([string]$ownerRepo, [bool]$includeSelf=$false, [string]$ref=$null) {
 
-    $chain = New-Object System.Collections.Generic.List[string]
+    $chain = New-Object System.Collections.Generic.List[hashtable]
 
     if (-not $cloned.Contains($ownerRepo)) {
         $cloned.Add($ownerRepo) | Out-Null
@@ -126,10 +129,11 @@ function Build-Chain([string]$ownerRepo, [bool]$includeSelf=$false, [string]$ref
         }
     }
 
-    if ($includeSelf) { $chain.Add($ownerRepo) | Out-Null }
+    if ($includeSelf) { $chain.Add(@{ Key=$ownerRepo; Name=$nameMap[$ownerRepo]; Path=$pathMap[$ownerRepo] }) | Out-Null }
     return ,$chain
 }
 
+# Build the list of repos to compile (strings: owner/repo), honoring mode
 $phaseList = New-Object System.Collections.Generic.List[string]
 
 if ($Mode -eq "seeds") {
@@ -145,7 +149,7 @@ if ($Mode -eq "seeds") {
             $sp = Parse-RepoSpec $s
             $chain = Build-Chain $sp.Key $true $sp.Ref
             foreach ($item in $chain) {
-                if (-not $phaseList.Contains($item)) { $phaseList.Add($item) | Out-Null }
+                if (-not $phaseList.Contains($item.Key)) { $phaseList.Add($item.Key) | Out-Null }
             }
             Write-Host "Seed: $($sp.Key)"
         }
@@ -160,17 +164,21 @@ else {
 
     foreach ($seed in (Lines $DepsFile)) {
         $parsed = Parse-RepoSpec $seed
-        $chain = Build-Chain $parsed.Key $true $parsed.Ref
+        $chain  = Build-Chain $parsed.Key $true $parsed.Ref
         foreach ($item in $chain) {
-            if (-not $phaseList.Contains($item)) { $phaseList.Add($item) | Out-Null }
+            if (-not $phaseList.Contains($item.Key)) { $phaseList.Add($item.Key) | Out-Null }
         }
     }
 
-    if ($phaseList.Count -eq 0) { Write-Host "(none)" } else {
+    if ($phaseList.Count -eq 0) {
+        Write-Host "(none)"
+    }
+    else {
         $phaseList | ForEach-Object { Write-Host "Dep: $_" }
     }
 }
 
+# Merge with de-dup (keep first occurrence)
 $seen   = New-Object System.Collections.Generic.HashSet[string]
 $merged = New-Object System.Collections.Generic.List[string]
 
@@ -181,6 +189,7 @@ foreach ($k in $phaseList) {
     }
 }
 
+# Map owner/repo -> folder name
 $folderOrder = $merged | ForEach-Object {
     if ($nameMap.ContainsKey($_)) {
         $nameMap[$_]
