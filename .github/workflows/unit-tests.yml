@@ -49,8 +49,6 @@ jobs:
           configuration: ${{ inputs.configuration }}
           token: ${{ inputs.token }}
 
-      # No need to download deps-assemblies artifact in this job — the action produced it locally.
-
       - name: Stage assemblies
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
         with:

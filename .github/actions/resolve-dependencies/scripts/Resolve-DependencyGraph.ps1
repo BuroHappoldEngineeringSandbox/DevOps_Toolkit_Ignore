@@ -1,3 +1,37 @@
+
+<#
+.SYNOPSIS
+    Resolve and clone all dependency repositories using a two‑phase
+    recursive model, producing build order, SHAs, and selection metadata.
+
+.DESCRIPTION
+    This script:
+      - Reads the caller repo's dependencies.txt (Phase A)
+      - Reads extra Phase B seeds (optional)
+      - Performs depth-first dependency expansion
+      - Clones each repo only once
+      - Selects branch/tag/SHA based on:
+            1. explicit @ref
+            2. PR branch
+            3. base branch
+            4. fallback to 'main'
+      - Records SHAs (used for cache key)
+      - Produces:
+            deps/_order.txt
+            deps/_shas.txt
+            deps/_selection.txt
+
+.OUTPUTS
+    deps/_order.txt     - build folder order
+    deps/_shas.txt      - repo SHAs for caching
+    deps/_selection.txt - summary of checkout branch + SHA
+
+.NOTES
+    The two-phase model allows a repo (e.g. Adapter) to declare
+    dependencies AND also include extra repos whose dependencies
+    must be resolved afterwards.
+#>
+
 param(
     [string]$DepsFile   = "dependencies.txt",
     [string]$ExtraRepos = ""
@@ -14,6 +48,7 @@ $selectFile = Join-Path $depsDir "_selection.txt"
 
 if (Test-Path $selectFile) { Remove-Item $selectFile -Force }
 
+# Parse dependency lines, ignoring empty lines and comments; also validate format
 function Lines([string]$path) {
     if (Test-Path $path) {
         return Get-Content $path |
@@ -34,18 +69,19 @@ function Parse-RepoSpec([string]$spec) {
     return @{ Key = $spec; Ref = $ref }
 }
 
-# Branch selection
+# Branch selection logic
 $Prefer   = $env:PR_BRANCH
 if (-not $Prefer -or $Prefer -eq "") { $Prefer = "feature/unknown" }
 
 $Fallback = $env:BASE_BRANCH
 if (-not $Fallback -or $Fallback -eq "") { $Fallback = "main" }
 
-# Track clones
+# Track cloned repos to avoid redundant work; also maintain maps for folder naming and later summary output
 $cloned  = New-Object System.Collections.Generic.HashSet[string]
 $nameMap = @{}
 $pathMap = @{}
 
+# Safely extract folder name from owner/repo, with fallback to 'unknown' for unexpected formats
 function Get-FolderName([string]$ownerRepo) {
     $parts = $ownerRepo.Split("/")
     if ($parts.Length -ge 2) { return $parts[1] }
@@ -53,6 +89,7 @@ function Get-FolderName([string]$ownerRepo) {
     return "unknown"
 }
 
+# Clone the repo if not already cloned, then checkout the appropriate ref based on explicit input or branch availability
 function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
 
     $name = Get-FolderName $ownerRepo
@@ -95,10 +132,12 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
             }
         }
 
+        # Record the selected SHA for caching and summary output
         $sha = (git rev-parse HEAD).Trim()
         Add-Content -Path $shaFile -Value "$ownerRepo $sha"
         Add-Content -Path $selectFile -Value "$ownerRepo|$name|$selectedRef|$sha"
 
+        # Reset origin to use token-free URL for later operations
         git remote set-url origin "https://github.com/$ownerRepo.git" | Out-Null
 
         Pop-Location
@@ -110,6 +149,7 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
     return @{ Key=$ownerRepo; Name=$name; Path=$path }
 }
 
+# Depth-first recursion: resolve children before parent
 function Build-Chain([string]$ownerRepo, [bool]$includeSelf=$false, [string]$ref=$null) {
 
     $chain = New-Object System.Collections.Generic.List[string]
@@ -181,14 +221,13 @@ foreach ($k in ($phaseA + $phaseB)) {
     }
 }
 
-# SAFE FOLDER MAPPING
+# Safe folder name mapping (handles unexpected input formats)
 $folderOrder = $merged | ForEach-Object {
 
     if ($nameMap.ContainsKey($_)) {
         $nameMap[$_]
     }
     else {
-        # SAFELY extract folder name
         $parts = $_.Split("/")
         if ($parts.Length -ge 2) { $parts[1] }
         elseif ($parts.Length -eq 1) { $parts[0] }
