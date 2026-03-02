@@ -3,29 +3,13 @@ name: BHoM Compliance (PR)
 on:
   workflow_call:
     inputs:
-      dotnet_version:     { type: string,  default: "10.x" }
-      configuration:      { type: string,  default: "Release" }
-      extra_repos:        { type: string,  default: "" }  # optional extras beyond Test_Toolkit
-      token:              { type: string,  default: "" }
+      dotnet_version:   { type: string, default: "10.x" }
+      configuration:    { type: string, default: "Release" }
+      token:            { type: string, default: "" }  # only if private deps
 
 jobs:
-  # Build all dependencies once (includes Test_Toolkit and its own deps)
-  deps:
-    permissions:
-      contents: read
-    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/deps.yml@main
-    with:
-      dotnet_version: ${{ inputs.dotnet_version }}
-      configuration:  ${{ inputs.configuration }}
-      token:          ${{ inputs.token }}
-      # Always include Test_Toolkit; callers can append more if needed
-      extra_repos: |
-        BHoM/Test_Toolkit
-        ${{ inputs.extra_repos }}
-
   compliance:
     runs-on: windows-latest
-    needs: deps
     permissions:
       contents: read
       pull-requests: read
@@ -45,12 +29,18 @@ jobs:
         with:
           dotnet-version: ${{ inputs.dotnet_version }}
 
-      - name: Download dependency assemblies
-        uses: actions/download-artifact@v4
+      # ------------------------------------------------------------
+      # Build ONLY Test_Toolkit + its own dependency graph
+      # ------------------------------------------------------------
+      - name: Resolve Dependencies (Compliance / seeds-only)
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
         with:
-          name: deps-assemblies
-          path: deps-assemblies
-        continue-on-error: true
+          mode: seeds
+          seeds: |
+            BHoM/Test_Toolkit
+          dotnet_version: ${{ inputs.dotnet_version }}
+          configuration:  ${{ inputs.configuration }}
+          token:          ${{ inputs.token }}
 
       - name: Stage assemblies to ProgramData\BHoM\Assemblies
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
@@ -65,11 +55,15 @@ jobs:
           ref: main
           path: toolkit_repo
 
-      - name: Build Compliance Runner (from DevOps_Toolkit)
+      - name: Publish Compliance Runner
         run: |
-          $proj = "toolkit_repo\src\Compliance\ComplianceRunner\ComplianceRunner.csproj"
+          $proj = "toolkit_repo\src\Carbon\ComplianceRunner\Carbon.ComplianceRunner.csproj"
           if (-not (Test-Path $proj)) {
-            Write-Error "Compliance Runner project not found at $proj."
+            # Fallback to previous path if needed
+            $proj = "toolkit_repo\src\Compliance\ComplianceRunner\ComplianceRunner.csproj"
+          }
+          if (-not (Test-Path $proj)) {
+            Write-Error "Compliance Runner project not found. Checked: `n - toolkit_repo\src\Carbon\ComplianceRunner\Carbon.ComplianceRunner.csproj `n - toolkit_repo\src\Compliance\ComplianceRunner\ComplianceRunner.csproj"
             exit 1
           }
           dotnet publish $proj -c ${{ inputs.configuration }} -o out\runner
@@ -82,12 +76,16 @@ jobs:
             "count=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
+
           git fetch origin ${{ github.base_ref }}
           $files = git diff --name-only --diff-filter=ACMRT origin/${{ github.base_ref }}...HEAD |
-                   Where-Object { $_.ToLower().EndsWith(".cs") }
+            Where-Object { $_.ToLower().EndsWith(".cs") }
+
           $count = ($files | Measure-Object).Count
           $files -join "`n" | Out-File changed_files.txt -Encoding utf8
+
           "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
           if ($count -gt 0) {
             Write-Host "Changed C# files:"
             Get-Content changed_files.txt
@@ -100,7 +98,6 @@ jobs:
         if: steps.changed.outputs.count != '0'
         run: |
           $sarif  = "compliance.sarif"
-          # Executable produced by the publish step above (adjust if your project outputs a different name)
           $runner = "out\runner\ComplianceRunner.exe"
           if (-not (Test-Path $runner)) {
             Write-Host "Publish contents:"
@@ -116,8 +113,11 @@ jobs:
             New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
             Copy-Item $src $dst -Force
           }
+
           & $runner "scan" --sarif $sarif
-          if ($LASTEXITCODE -ne 0) { Write-Host "Compliance violations detected (non-zero exit)." }
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Compliance violations detected (non-zero exit)."
+          }
 
       - name: Upload SARIF (Code scanning)
         if: steps.changed.outputs.count != '0'

@@ -44,10 +44,10 @@ jobs:
       - name: Resolve Dependencies
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
         with:
-          extra_repos: ${{ inputs.extra_repos }}
+          mode: caller
           dotnet_version: ${{ inputs.dotnet_version }}
-          configuration: ${{ inputs.configuration }}
-          token: ${{ inputs.token }}
+          configuration:  ${{ inputs.configuration }}
+          token:          ${{ inputs.token }}
 
       - name: Stage assemblies
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main

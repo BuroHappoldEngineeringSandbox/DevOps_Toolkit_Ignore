@@ -1,42 +1,11 @@
-# ================================================================
-#  ACTION: resolve-dependencies
-#
-#  SYNOPSIS:
-#    Composite action that resolves, clones, builds, stages, and
-#    caches BHoM dependency repositories using a two-phase model.
-#
-#  DESCRIPTION:
-#    This action:
-#      - Installs .NET + NuGet
-#      - Caches package dependencies (NuGet + MSBuild)
-#      - Executes Resolve-DependencyGraph.ps1 to clone repos and
-#        determine build order
-#      - Generates a stable SHA-based cache key
-#      - Restores/creates dependency assembly cache
-#      - Executes Build-Dependencies.ps1 when cache is stale
-#      - Uploads dependency assemblies + metadata artifacts
-#
-#  PRIMARY OUTPUT:
-#    deps-assemblies/   (DLL folder)
-#
-#  NOTES:
-#    - Matches legacy behaviour from original deps.yml
-#    - Avoids setup-dotnet built-in caching to prevent lockfile checks
-# ================================================================
-
 name: "Resolve Dependencies (BHoM)"
-description: "Clones dependency graphs (two-phase), computes order, builds, caches, and publishes assemblies."
+description: "Clones dependency graphs (caller or seeds-only), builds, caches, and publishes dependency assemblies."
 
 inputs:
   deps_file:
-    description: "Path to the root dependencies file in the caller repo"
+    description: "Path to the caller repo's dependencies.txt (used when mode=caller)"
     required: false
     default: "dependencies.txt"
-
-  extra_repos:
-    description: "Newline-separated owner/repo[@ref] for Phase B seeding"
-    required: false
-    default: ""
 
   dotnet_version:
     description: ".NET SDK version spec"
@@ -49,7 +18,20 @@ inputs:
     default: "Release"
 
   token:
-    description: "GitHub App token/PAT (falls back to GITHUB_TOKEN if blank)"
+    description: "GitHub token or PAT for private dependency repositories"
+    required: false
+    default: ""
+
+  mode:
+    description: |
+      Dependency resolution mode:
+        - caller  → build only the caller repo's dependency graph (default)
+        - seeds   → build only the chosen seed repo(s) and their graphs
+    required: false
+    default: "caller"
+
+  seeds:
+    description: "Used when mode=seeds. Newline-separated owner/repo[@ref] list."
     required: false
     default: ""
 
@@ -57,9 +39,8 @@ runs:
   using: "composite"
 
   steps:
-
     # ------------------------------------------------------------
-    # Install .NET SDK (NO built-in caching to avoid lockfile checks)
+    # Install .NET SDK (no built-in caching)
     # ------------------------------------------------------------
     - name: Setup .NET SDK
       uses: actions/setup-dotnet@v4
@@ -67,7 +48,7 @@ runs:
         dotnet-version: ${{ inputs.dotnet_version }}
 
     # ------------------------------------------------------------
-    # NuGet CLI is needed for legacy packages.config restore
+    # NuGet CLI (needed for legacy packages.config restores)
     # ------------------------------------------------------------
     - name: Setup NuGet CLI
       uses: nuget/setup-nuget@v2
@@ -75,7 +56,7 @@ runs:
         nuget-version: "6.x"
 
     # ------------------------------------------------------------
-    # Cache NuGet + MSBuild (fast restore)
+    # Cache NuGet packages + MSBuild graph cache
     # ------------------------------------------------------------
     - name: Cache NuGet packages
       uses: actions/cache@v4
@@ -87,63 +68,70 @@ runs:
         restore-keys: ${{ runner.os }}-nuget-
 
     # ------------------------------------------------------------
-    # Prepare environment variables consumed by the PS scripts
+    # Environment variables consumed by scripts
     # ------------------------------------------------------------
     - name: Compute environment
       shell: pwsh
       run: |
         $tok = '${{ inputs.token }}'
         if ([string]::IsNullOrWhiteSpace($tok)) { $tok = '${{ github.token }}' }
+
         "DEP_TOKEN=$tok" | Out-File -FilePath $env:GITHUB_ENV -Append
         "CONFIGURATION=${{ inputs.configuration }}" | Out-File -FilePath $env:GITHUB_ENV -Append
 
     # ------------------------------------------------------------
-    # Prepare workspace directories (fresh run)
+    # Prepare dependency directories
     # ------------------------------------------------------------
     - name: Prepare folders
       shell: pwsh
       run: |
         New-Item -ItemType Directory -Force -Path deps | Out-Null
         New-Item -ItemType Directory -Force -Path deps-assemblies | Out-Null
+
         New-Item -ItemType File -Force -Path deps/_shas.txt | Out-Null
         if (Test-Path deps/_order.txt)     { Remove-Item deps/_order.txt -Force }
         if (Test-Path deps/_selection.txt) { Remove-Item deps/_selection.txt -Force }
 
     # ------------------------------------------------------------
-    # Run the dependency graph resolver (two-phase recursion)
+    # Resolve dependency graph (caller or seeds mode)
     # ------------------------------------------------------------
-    - name: Resolve dependency graph (Two-phase)
+    - name: Resolve dependency graph
       shell: pwsh
       env:
         PR_BRANCH: ${{ github.event.pull_request.head.ref }}
         BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
       run: |
         $script = Join-Path $env:GITHUB_ACTION_PATH "scripts/Resolve-DependencyGraph.ps1"
-        & $script -DepsFile "${{ inputs.deps_file }}" -ExtraRepos "${{ inputs.extra_repos }}"
+
+        & $script `
+          -DepsFile "${{ inputs.deps_file }}" `
+          -Mode "${{ inputs.mode }}" `
+          -Seeds "${{ inputs.seeds }}"
 
     # ------------------------------------------------------------
-    # Calculate a unique cache key based on recorded SHAs
+    # Composite cache key from dependency SHAs
     # ------------------------------------------------------------
-    - name: Compute composite cache key from dependency SHAs
+    - name: Compute composite cache key from SHAs
       id: shas
       shell: pwsh
       run: |
         if (-not (Test-Path 'deps/_shas.txt')) {
-          Write-Host "No dependency SHAs recorded — using empty key."
           "keypart=" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           exit 0
         }
+
         $pairs = Get-Content 'deps/_shas.txt' | Where-Object { $_ -match '\S+\s+[0-9a-f]+' }
         $keypart = ($pairs | Sort-Object | ForEach-Object {
-          $t = $_.Trim() -split '\s+'
-          "$($t[0])@$($t[1])"
+            $s = $_.Trim().Split(" ")
+            "$($s[0])@$($s[1])"
         }) -join ';'
+
         "keypart=$keypart" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
     # ------------------------------------------------------------
-    # Restore deps-assemblies cache if available
+    # Restore assemblies from cache if available
     # ------------------------------------------------------------
-    - name: Restore cache (deps-assemblies)
+    - name: Restore dependency assembly cache
       id: cache
       uses: actions/cache@v4
       with:
@@ -151,9 +139,9 @@ runs:
         key: depsasm-${{ runner.os }}-${{ inputs.dotnet_version }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
 
     # ------------------------------------------------------------
-    # Build dependencies only if cache is stale
+    # Build dependencies if cache missed
     # ------------------------------------------------------------
-    - name: Build dependencies (on cache miss)
+    - name: Build dependencies
       if: steps.cache.outputs.cache-hit != 'true'
       shell: pwsh
       run: |
@@ -161,7 +149,7 @@ runs:
         & $script -Configuration "${{ inputs.configuration }}"
 
     # ------------------------------------------------------------
-    # Upload the resolved + built assemblies as an artifact
+    # Upload assemblies
     # ------------------------------------------------------------
     - name: Upload dependency assemblies
       uses: actions/upload-artifact@v4
