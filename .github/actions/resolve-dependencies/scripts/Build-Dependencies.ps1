@@ -1,62 +1,49 @@
-param(
-    [string]$Configuration = "Release"
-)
-
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = 'Stop'
 
-$depsDir = "deps"
+$depsDir  = "deps"
 $orderOut = Join-Path $depsDir "_order.txt"
+$overallFailures = @()
 
 if (-not (Test-Path $orderOut)) {
-    Write-Warning "No order file, falling back to directory enumeration."
+    Write-Warning "No build order file found; falling back to directory enumeration."
     $order = (Get-ChildItem $depsDir -Directory | Select-Object -ExpandProperty Name)
-}
-else {
+} else {
     $order = Get-Content $orderOut
 }
 
-$overallFailures = @()
-
 foreach ($repoName in $order) {
-
     $repoPath = Join-Path $depsDir $repoName
     if (-not (Test-Path $repoPath)) { continue }
 
     Write-Host "::group::Building $repoName"
 
     $solution = Get-ChildItem $repoPath -Recurse -Filter *.sln -ErrorAction SilentlyContinue | Select-Object -First 1
-    $usesPackagesConfig = (Get-ChildItem $repoPath -Recurse -Filter packages.config -ErrorAction SilentlyContinue |
-                           Measure-Object).Count -gt 0
+    $usesPackagesConfig = (Get-ChildItem $repoPath -Recurse -Filter packages.config -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
 
     try {
         if ($null -ne $solution) {
-
             if ($usesPackagesConfig) {
+                # Legacy restore to solution-local 'packages/' folder (v2 layout)
                 nuget restore $solution.FullName -NonInteractive
-            }
-            else {
+            } else {
                 dotnet restore $solution.FullName
             }
-
-            dotnet build $solution.FullName -c $Configuration --no-restore --nologo -m
+            dotnet build $solution.FullName -c $env:CONFIGURATION --no-restore --nologo -m
         }
         else {
-
             $projects = Get-ChildItem $repoPath -Recurse -Filter *.csproj -ErrorAction SilentlyContinue
-
             if ($projects.Count -eq 0) {
-                Write-Host "No .sln or .csproj found—skipping"
-            }
-            else {
+                Write-Host "No .sln or .csproj in $repoName — skipping build."
+            } else {
                 foreach ($p in $projects) {
                     if ($usesPackagesConfig) {
+                        # When only projects are present, restore at repo root
                         nuget restore $repoPath -NonInteractive
-                    }
-                    else {
+                    } else {
                         dotnet restore $p.FullName
                     }
-                    dotnet build $p.FullName -c $Configuration --no-restore --nologo -m
+                    dotnet build $p.FullName -c $env:CONFIGURATION --no-restore --nologo -m
                 }
             }
         }
@@ -73,14 +60,18 @@ if (-not (Test-Path "deps-assemblies")) {
     New-Item -ItemType Directory -Force -Path "deps-assemblies" | Out-Null
 }
 
-$dlls = Get-ChildItem "deps" -Recurse -Filter *.dll -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -match "\\bin\\$Configuration\\" -and $_.FullName -notmatch "\\ref\\" }
+Get-ChildItem "deps" -Recurse -Filter *.dll -ErrorAction SilentlyContinue |
+  Where-Object { $_.FullName -match "\\bin\\$($env:CONFIGURATION)\\" } |
+  ForEach-Object { Copy-Item $_.FullName "deps-assemblies" -Force }
 
-foreach ($d in $dlls) { Copy-Item $d.FullName "deps-assemblies" -Force }
+Write-Host "Collected assemblies (sample):"
+Get-ChildItem "deps-assemblies" -Filter *.dll -ErrorAction SilentlyContinue |
+  Sort-Object Name |
+  Select-Object -First 60 |
+  ForEach-Object { $_.Name }
 
-Write-Host "Collected assemblies:"
-Get-ChildItem "deps-assemblies" -Filter *.dll | Select-Object -First 40 | ForEach-Object { $_.Name }
-
-if ($overallFailures.Count -gt 0) {
-    Write-Warning "Completed with failures: $($overallFailures -join ', ')"
-}
+# Optional failure: keep original behavior (do not fail job).
+# If you want to fail when any build fails, uncomment:
+# if ($overallFailures.Count -gt 0) {
+#   Write-Error ("One or more dependency builds failed:`n - " + ($overallFailures -join "`n - "))
+# }

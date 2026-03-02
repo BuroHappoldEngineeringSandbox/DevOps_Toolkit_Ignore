@@ -40,13 +40,10 @@ jobs:
             ~\AppData\Local\Microsoft\MSBuild\Cache
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj','**/global.json','**/nuget.config') }}
           restore-keys: ${{ runner.os }}-nuget-
-          enableCrossOsArchive: true
 
-      # --- NEW: resolve and build dependencies using the composite action (runs in this job) ---
       - name: Resolve Dependencies
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
         with:
-          deps_file: "dependencies.txt"             # keep default or override
           extra_repos: ${{ inputs.extra_repos }}
           dotnet_version: ${{ inputs.dotnet_version }}
           configuration: ${{ inputs.configuration }}

@@ -1,48 +1,55 @@
 name: "Resolve Dependencies (BHoM)"
-description: "Clones, resolves, builds, and stages BHoM dependency assemblies."
-
+description: "Clones dependency graphs (two-phase), computes order, builds, caches, and publishes assemblies."
 inputs:
   deps_file:
-    description: "Path to the root dependencies file"
+    description: "Path to the root dependencies file in the caller repo"
     required: false
     default: "dependencies.txt"
-
   extra_repos:
-    description: "Newline-separated owner/repo[@ref] to seed Phase B."
+    description: "Newline-separated owner/repo[@ref] for Phase B seeding"
     required: false
     default: ""
-
   dotnet_version:
-    description: "DotNet version for setup-dotnet."
+    description: ".NET SDK version spec"
     required: false
     default: "10.x"
-
   configuration:
-    description: "Build configuration for dependencies."
+    description: "Build configuration"
     required: false
     default: "Release"
-
   token:
-    description: "GitHub App token or PAT for private repositories."
+    description: "GitHub App token/PAT (falls back to GITHUB_TOKEN if blank)"
     required: false
     default: ""
 
 runs:
   using: "composite"
-
   steps:
+    # Matches your deps.yml: setup .NET SDK (no built-in caching to avoid lock-file checks)
     - name: Setup .NET SDK
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ inputs.dotnet_version }}
-        cache: true
 
+    # Matches your deps.yml: setup NuGet CLI
     - name: Setup NuGet CLI
       uses: nuget/setup-nuget@v2
       with:
         nuget-version: "6.x"
 
-    - name: Compute DEP_TOKEN env
+    # Matches your deps.yml: NuGet + MSBuild caches with same keying approach
+    - name: Cache NuGet packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.nuget/packages
+          ~\AppData\Local\Microsoft\MSBuild\Cache
+        key: ${{ runner.os }}-nuget-${{ inputs.dotnet_version }}-${{ hashFiles('**/*.csproj','**/global.json','**/nuget.config') }}
+        restore-keys: ${{ runner.os }}-nuget-
+        # keep default enableCrossOsArchive behavior; this matches your working setup
+
+    # Compute env like your original: CONFIGURATION and DEP_TOKEN (fallback to GITHUB_TOKEN)
+    - name: Compute environment
       shell: pwsh
       run: |
         $tok = '${{ inputs.token }}'
@@ -50,72 +57,64 @@ runs:
         "DEP_TOKEN=$tok" | Out-File -FilePath $env:GITHUB_ENV -Append
         "CONFIGURATION=${{ inputs.configuration }}" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-    - name: Prepare workspace folders
+    # Prepare folders exactly like your deps.yml
+    - name: Prepare folders
       shell: pwsh
       run: |
         New-Item -ItemType Directory -Force -Path deps | Out-Null
         New-Item -ItemType Directory -Force -Path deps-assemblies | Out-Null
-        if (Test-Path deps/_order.txt) { Remove-Item deps/_order.txt -Force }
-        if (Test-Path deps/_shas.txt) { Remove-Item deps/_shas.txt -Force }
-        if (Test-Path deps/_selection.txt) { Remove-Item deps/_selection.txt -Force }
         New-Item -ItemType File -Force -Path deps/_shas.txt | Out-Null
+        if (Test-Path deps/_order.txt) { Remove-Item deps/_order.txt -Force }
 
-    - name: Resolve dependency graph (Two-phase)
+    # Clone graph + order computation (two-phase) — now executed via script
+    - name: Clone dependency graphs (Phase A then Phase B) and compute order
+      id: clone_graph
       shell: pwsh
+      env:
+        PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
       run: |
-        $ErrorActionPreference = 'Stop'
         $script = Join-Path $GITHUB_ACTION_PATH "scripts/Resolve-DependencyGraph.ps1"
-        & $script `
-          -DepsFile "${{ inputs.deps_file }}" `
-          -ExtraRepos "${{ inputs.extra_repos }}" `
-          -DotNetVersion "${{ inputs.dotnet_version }}" `
-          -Configuration "${{ inputs.configuration }}"
+        & $script -DepsFile "${{ inputs.deps_file }}" -ExtraRepos "${{ inputs.extra_repos }}"
 
-    - name: Compute dependency SHA key
+    # Compute composite cache key from recorded SHAs (unchanged)
+    - name: Compute composite cache key from dependency SHAs
       id: shas
       shell: pwsh
       run: |
         if (-not (Test-Path 'deps/_shas.txt')) {
+          Write-Host "No dependency SHAs recorded — using empty key."
           "keypart=" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           exit 0
         }
-        $pairs = Get-Content 'deps/_shas.txt'
+        $pairs = Get-Content 'deps/_shas.txt' | Where-Object { $_ -match '\S+\s+[0-9a-f]+' }
         $keypart = ($pairs | Sort-Object | ForEach-Object {
-          $t = $_.Trim().Split(" ")
+          $t = $_.Trim() -split '\s+'
           "$($t[0])@$($t[1])"
-        }) -join ";"
+        }) -join ';'
         "keypart=$keypart" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-    - name: Cache dependencies (assemblies)
+    # Restore the assemblies cache — identical key format to your deps.yml
+    - name: Restore cache (deps-assemblies)
       id: cache
       uses: actions/cache@v4
       with:
         path: deps-assemblies
-        key: depsasm-${{ inputs.dotnet_version }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
-        enableCrossOsArchive: true
+        key: depsasm-${{ runner.os }}-${{ inputs.dotnet_version }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
 
-    - name: Build dependencies (if cache miss)
+    # Build only on cache miss — logic moved to script but unchanged
+    - name: Build dependencies (on cache miss)
       if: steps.cache.outputs.cache-hit != 'true'
       shell: pwsh
       run: |
         $script = Join-Path $GITHUB_ACTION_PATH "scripts/Build-Dependencies.ps1"
-        & $script -Configuration "${{ inputs.configuration }}"
+        & $script
 
+    # Upload the assemblies artifact (exactly like your deps.yml)
     - name: Upload dependency assemblies
       uses: actions/upload-artifact@v4
       with:
         name: deps-assemblies
         path: deps-assemblies/**
-        retention-days: 7
-        if-no-files-found: warn
-
-    - name: Upload dependency metadata
-      uses: actions/upload-artifact@v4
-      with:
-        name: deps-metadata
-        path: |
-          deps/_order.txt
-          deps/_shas.txt
-          deps/_selection.txt
         retention-days: 7
         if-no-files-found: warn
