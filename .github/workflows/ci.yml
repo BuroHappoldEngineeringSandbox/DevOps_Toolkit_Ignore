@@ -3,28 +3,17 @@ name: BHoM CI (Orchestrator)
 on:
   workflow_call:
     inputs:
-      dotnet_version:     { type: string,  default: "10.x" }
-      configuration:      { type: string,  default: "Release" }
-      test_solution:      { type: string,  default: ".ci/tests/UnitTests/UnitTests.sln" }
-      extra_repos:        { type: string,  default: "" }
-      token:              { type: string,  default: "" }  # only if private deps
-      test_max_cpu:       { type: number,  default: 4 }
-      coverage_on_push:   { type: boolean, default: false }
+      dotnet_version:   { type: string,  default: "10.x" }
+      configuration:    { type: string,  default: "Release" }
+      test_solution:    { type: string,  default: ".ci/tests/UnitTests/UnitTests.sln" }
+      extra_repos:      { type: string,  default: "" }
+      token:            { type: string,  default: "" }   # only if private deps
+      test_max_cpu:     { type: number,  default: 4 }
+      coverage_on_push: { type: boolean, default: false }
 
 jobs:
-  deps:
-    permissions:
-      contents: read
-    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/deps.yml@main
-    with:
-      dotnet_version:   ${{ inputs.dotnet_version }}
-      configuration:    ${{ inputs.configuration }}
-      token:            ${{ inputs.token }}
-      extra_repos:      ${{ inputs.extra_repos }}
-
   test:
     runs-on: windows-latest
-    needs: deps
     permissions:
       contents: read
       pull-requests: write
@@ -52,16 +41,22 @@ jobs:
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj','**/global.json','**/nuget.config') }}
           restore-keys: ${{ runner.os }}-nuget-
 
-      - uses: actions/download-artifact@v4
+      # --- NEW: resolve and build dependencies using the composite action (runs in this job) ---
+      - name: Resolve Dependencies
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
         with:
-          name: deps-assemblies
-          path: deps-assemblies
-        continue-on-error: true
+          deps_file: "dependencies.txt"             # keep default or override
+          extra_repos: ${{ inputs.extra_repos }}
+          dotnet_version: ${{ inputs.dotnet_version }}
+          configuration: ${{ inputs.configuration }}
+          token: ${{ inputs.token }}
+
+      # No need to download deps-assemblies artifact in this job — the action produced it locally.
 
       - name: Stage assemblies
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
         with:
-            source: "deps-assemblies"
+          source: "deps-assemblies"
 
       - name: Verify test solution
         run: |
@@ -115,14 +110,10 @@ jobs:
 
       - name: Add summary
         if: (github.event_name == 'pull_request' || inputs.coverage_on_push == true) && always()
-        run: if (Test-Path "coverage-report/SummaryGithub.md") { Get-Content "coverage-report/SummaryGithub.md" | Out-File -Append $env:GITHUB_STEP_SUMMARY }
-
-      - name: Post coverage summary as PR comment
-        if: github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: "code-coverage"
-          path: coverage-report/SummaryGithub.md
+        run: |
+          if (Test-Path "coverage-report/SummaryGithub.md") {
+            Get-Content "coverage-report/SummaryGithub.md" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
 
   publish_test_results:
     name: Publish Unit Test Results (PR Check)

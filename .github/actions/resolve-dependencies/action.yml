@@ -1,0 +1,120 @@
+name: "Resolve Dependencies (BHoM)"
+description: "Clones, resolves, builds, and stages BHoM dependency assemblies."
+
+inputs:
+  deps_file:
+    description: "Path to the root dependencies file"
+    required: false
+    default: "dependencies.txt"
+
+  extra_repos:
+    description: "Newline-separated owner/repo[@ref] to seed Phase B."
+    required: false
+    default: ""
+
+  dotnet_version:
+    description: "DotNet version for setup-dotnet."
+    required: false
+    default: "10.x"
+
+  configuration:
+    description: "Build configuration for dependencies."
+    required: false
+    default: "Release"
+
+  token:
+    description: "GitHub App token or PAT for private repositories."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+
+  steps:
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet_version }}
+        cache: true
+
+    - name: Setup NuGet CLI
+      uses: nuget/setup-nuget@v2
+      with:
+        nuget-version: "6.x"
+
+    - name: Compute DEP_TOKEN env
+      shell: pwsh
+      run: |
+        $tok = '${{ inputs.token }}'
+        if ([string]::IsNullOrWhiteSpace($tok)) { $tok = '${{ github.token }}' }
+        "DEP_TOKEN=$tok" | Out-File -FilePath $env:GITHUB_ENV -Append
+        "CONFIGURATION=${{ inputs.configuration }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+    - name: Prepare workspace folders
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path deps | Out-Null
+        New-Item -ItemType Directory -Force -Path deps-assemblies | Out-Null
+        if (Test-Path deps/_order.txt) { Remove-Item deps/_order.txt -Force }
+        if (Test-Path deps/_shas.txt) { Remove-Item deps/_shas.txt -Force }
+        if (Test-Path deps/_selection.txt) { Remove-Item deps/_selection.txt -Force }
+        New-Item -ItemType File -Force -Path deps/_shas.txt | Out-Null
+
+    - name: Resolve dependency graph (Two-phase)
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $script = Join-Path $GITHUB_ACTION_PATH "scripts/Resolve-DependencyGraph.ps1"
+        & $script `
+          -DepsFile "${{ inputs.deps_file }}" `
+          -ExtraRepos "${{ inputs.extra_repos }}" `
+          -DotNetVersion "${{ inputs.dotnet_version }}" `
+          -Configuration "${{ inputs.configuration }}"
+
+    - name: Compute dependency SHA key
+      id: shas
+      shell: pwsh
+      run: |
+        if (-not (Test-Path 'deps/_shas.txt')) {
+          "keypart=" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          exit 0
+        }
+        $pairs = Get-Content 'deps/_shas.txt'
+        $keypart = ($pairs | Sort-Object | ForEach-Object {
+          $t = $_.Trim().Split(" ")
+          "$($t[0])@$($t[1])"
+        }) -join ";"
+        "keypart=$keypart" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+    - name: Cache dependencies (assemblies)
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: deps-assemblies
+        key: depsasm-${{ inputs.dotnet_version }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
+
+    - name: Build dependencies (if cache miss)
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        $script = Join-Path $GITHUB_ACTION_PATH "scripts/Build-Dependencies.ps1"
+        & $script -Configuration "${{ inputs.configuration }}"
+
+    - name: Upload dependency assemblies
+      uses: actions/upload-artifact@v4
+      with:
+        name: deps-assemblies
+        path: deps-assemblies/**
+        retention-days: 7
+        if-no-files-found: warn
+
+    - name: Upload dependency metadata
+      uses: actions/upload-artifact@v4
+      with:
+        name: deps-metadata
+        path: |
+          deps/_order.txt
+          deps/_shas.txt
+          deps/_selection.txt
+        retention-days: 7
+        if-no-files-found: warn
