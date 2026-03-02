@@ -15,16 +15,32 @@ $selectFile = Join-Path $depsDir "_selection.txt"
 
 if (Test-Path $selectFile) { Remove-Item $selectFile -Force }
 
+# ------------------------------------------------------------
+# Read dependency lines, ignoring comments/blank lines, and
+# strictly enforce "one repo per line" with no whitespace.
+# Valid forms:
+#   owner/repo
+#   owner/repo@branch|tag|sha
+# ------------------------------------------------------------
 function Lines([string]$path) {
     if (Test-Path $path) {
         return Get-Content $path |
-            Where-Object { $_ -and -not $_.Trim().StartsWith("#") } |
             ForEach-Object { $_.Trim() } |
-            Where-Object { $_ -ne "" -and $_ -match "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(@[A-Za-z0-9._/-]+)?$" }
+            Where-Object { $_ -ne "" -and -not $_.StartsWith("#") } |
+            ForEach-Object {
+                if ($_.IndexOfAny(@(' ', "`t")) -ge 0) {
+                    throw "Malformed dependency entry (contains whitespace): '$_'. Each line must be a single 'owner/repo' or 'owner/repo@ref'."
+                }
+                $_
+            } |
+            Where-Object { $_ -match "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(@[A-Za-z0-9._/-]+)?$" }
     }
     return @()
 }
 
+# ------------------------------------------------------------
+# Parse "owner/repo" and optional "@ref"
+# ------------------------------------------------------------
 function Parse-RepoSpec([string]$spec) {
     $ref = $null
     if ($spec.Contains("@")) {
@@ -35,17 +51,22 @@ function Parse-RepoSpec([string]$spec) {
     return @{ Key=$spec; Ref=$ref }
 }
 
-# Branch selection (PR branch preferred; fallback to base or main)
+# ------------------------------------------------------------
+# Branch preferences:
+#   1) explicit @ref; 2) PR_BRANCH; 3) BASE_BRANCH; 4) "main"
+# ------------------------------------------------------------
 $Prefer   = $env:PR_BRANCH
-if (-not $Prefer -or $Prefer -eq "") { $Prefer = "feature/unknown" }
+if ([string]::IsNullOrWhiteSpace($Prefer)) { $Prefer = "feature/unknown" }
 
 $Fallback = $env:BASE_BRANCH
-if (-not $Fallback -or $Fallback -eq "") { $Fallback = "main" }
+if ([string]::IsNullOrWhiteSpace($Fallback)) { $Fallback = "main" }
 
-# Track cloned repos and folder mapping
+# ------------------------------------------------------------
+# Tracking and maps
+# ------------------------------------------------------------
 $cloned  = New-Object System.Collections.Generic.HashSet[string]
-$nameMap = @{}
-$pathMap = @{}
+$nameMap = @{}  # owner/repo -> folder
+$pathMap = @{}  # owner/repo -> path
 
 function Get-FolderName([string]$ownerRepo) {
     $parts = $ownerRepo.Split("/")
@@ -54,6 +75,9 @@ function Get-FolderName([string]$ownerRepo) {
     return "unknown"
 }
 
+# ------------------------------------------------------------
+# Clone + checkout with selection recording
+# ------------------------------------------------------------
 function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
 
     $name = Get-FolderName $ownerRepo
@@ -98,7 +122,6 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
         Add-Content -Path $shaFile -Value "$ownerRepo $sha"
         Add-Content -Path $selectFile -Value "$ownerRepo|$name|$selectedRef|$sha"
 
-        # Remove token from remote
         git remote set-url origin "https://github.com/$ownerRepo.git" | Out-Null
         Pop-Location
     }
@@ -109,13 +132,17 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
     return @{ Key=$ownerRepo; Name=$name; Path=$path }
 }
 
+# ------------------------------------------------------------
+# Depth-first expansion: children first, then self
+# Returns List[hashtable] of entries { Key, Name, Path }
+# ------------------------------------------------------------
 function Build-Chain([string]$ownerRepo, [bool]$includeSelf=$false, [string]$ref=$null) {
 
     $chain = New-Object System.Collections.Generic.List[hashtable]
 
     if (-not $cloned.Contains($ownerRepo)) {
         $cloned.Add($ownerRepo) | Out-Null
-        Clone-And-Checkout $ownerRepo $ref
+        Clone-And-Checkout $ownerRepo $ref | Out-Null
     }
 
     $repoPath = $pathMap[$ownerRepo]
@@ -129,21 +156,27 @@ function Build-Chain([string]$ownerRepo, [bool]$includeSelf=$false, [string]$ref
         }
     }
 
-    if ($includeSelf) { $chain.Add(@{ Key=$ownerRepo; Name=$nameMap[$ownerRepo]; Path=$pathMap[$ownerRepo] }) | Out-Null }
-    return ,$chain
+    if ($includeSelf) {
+        $chain.Add(@{ Key=$ownerRepo; Name=$nameMap[$ownerRepo]; Path=$pathMap[$ownerRepo] }) | Out-Null
+    }
+
+    return $chain
 }
 
-# Build the list of repos to compile (strings: owner/repo), honoring mode
+# ------------------------------------------------------------
+# Compute the set to build (strings), honoring 'mode'
+# ------------------------------------------------------------
 $phaseList = New-Object System.Collections.Generic.List[string]
 
 if ($Mode -eq "seeds") {
 
     Write-Host "----- MODE: seeds (build only specified seed repo(s) + dependencies) -----"
 
-    if ($Seeds) {
-        $seedList = @($Seeds.Split("`n")) |
+    if (-not [string]::IsNullOrWhiteSpace($Seeds)) {
+        $seedList = @($Seeds.Trim().Split("`n")) |
             ForEach-Object { $_.Trim() } |
-            Where-Object { $_ -ne "" -and -not $_.StartsWith("#") }
+            Where-Object { $_ -ne "" -and $_.IndexOfAny(@(' ', "`t")) -lt 0 } |
+            Where-Object { $_ -match "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(@[A-Za-z0-9._/-]+)?$" }
 
         foreach ($s in $seedList) {
             $sp = Parse-RepoSpec $s
@@ -168,17 +201,17 @@ else {
         foreach ($item in $chain) {
             if (-not $phaseList.Contains($item.Key)) { $phaseList.Add($item.Key) | Out-Null }
         }
+        Write-Host "Dep: $($parsed.Key)"
     }
 
     if ($phaseList.Count -eq 0) {
         Write-Host "(none)"
     }
-    else {
-        $phaseList | ForEach-Object { Write-Host "Dep: $_" }
-    }
 }
 
-# Merge with de-dup (keep first occurrence)
+# ------------------------------------------------------------
+# Merge with de-dup (keep first)
+# ------------------------------------------------------------
 $seen   = New-Object System.Collections.Generic.HashSet[string]
 $merged = New-Object System.Collections.Generic.List[string]
 
@@ -189,7 +222,9 @@ foreach ($k in $phaseList) {
     }
 }
 
-# Map owner/repo -> folder name
+# ------------------------------------------------------------
+# Map owner/repo -> folder, write _order.txt
+# ------------------------------------------------------------
 $folderOrder = $merged | ForEach-Object {
     if ($nameMap.ContainsKey($_)) {
         $nameMap[$_]
@@ -207,6 +242,9 @@ $folderOrder | Set-Content -Path $orderOut -Encoding utf8
 Write-Host "== Final build order =="
 Get-Content $orderOut | ForEach-Object { Write-Host " - $_" }
 
+# ------------------------------------------------------------
+# Print selection summary
+# ------------------------------------------------------------
 if (Test-Path $selectFile) {
     Write-Host "== Checkout selections =="
     foreach ($line in (Get-Content $selectFile)) {
