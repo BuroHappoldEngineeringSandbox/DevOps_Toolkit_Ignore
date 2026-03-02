@@ -25,19 +25,16 @@ inputs:
 runs:
   using: "composite"
   steps:
-    # Matches your deps.yml: setup .NET SDK (no built-in caching to avoid lock-file checks)
     - name: Setup .NET SDK
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ inputs.dotnet_version }}
 
-    # Matches your deps.yml: setup NuGet CLI
     - name: Setup NuGet CLI
       uses: nuget/setup-nuget@v2
       with:
         nuget-version: "6.x"
 
-    # Matches your deps.yml: NuGet + MSBuild caches with same keying approach
     - name: Cache NuGet packages
       uses: actions/cache@v4
       with:
@@ -46,9 +43,7 @@ runs:
           ~\AppData\Local\Microsoft\MSBuild\Cache
         key: ${{ runner.os }}-nuget-${{ inputs.dotnet_version }}-${{ hashFiles('**/*.csproj','**/global.json','**/nuget.config') }}
         restore-keys: ${{ runner.os }}-nuget-
-        # keep default enableCrossOsArchive behavior; this matches your working setup
 
-    # Compute env like your original: CONFIGURATION and DEP_TOKEN (fallback to GITHUB_TOKEN)
     - name: Compute environment
       shell: pwsh
       run: |
@@ -57,27 +52,24 @@ runs:
         "DEP_TOKEN=$tok" | Out-File -FilePath $env:GITHUB_ENV -Append
         "CONFIGURATION=${{ inputs.configuration }}" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-    # Prepare folders exactly like your deps.yml
     - name: Prepare folders
       shell: pwsh
       run: |
         New-Item -ItemType Directory -Force -Path deps | Out-Null
         New-Item -ItemType Directory -Force -Path deps-assemblies | Out-Null
         New-Item -ItemType File -Force -Path deps/_shas.txt | Out-Null
-        if (Test-Path deps/_order.txt) { Remove-Item deps/_order.txt -Force }
+        if (Test-Path deps/_order.txt)     { Remove-Item deps/_order.txt -Force }
+        if (Test-Path deps/_selection.txt) { Remove-Item deps/_selection.txt -Force }
 
-    # Clone graph + order computation (two-phase) — now executed via script
-    - name: Clone dependency graphs (Phase A then Phase B) and compute order
-      id: clone_graph
+    - name: Resolve dependency graph (Two-phase)
       shell: pwsh
       env:
         PR_BRANCH: ${{ github.event.pull_request.head.ref }}
         BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
       run: |
-        $script = Join-Path $GITHUB_ACTION_PATH "scripts/Resolve-DependencyGraph.ps1"
+        $script = Join-Path $env:GITHUB_ACTION_PATH "scripts/Resolve-DependencyGraph.ps1"
         & $script -DepsFile "${{ inputs.deps_file }}" -ExtraRepos "${{ inputs.extra_repos }}"
 
-    # Compute composite cache key from recorded SHAs (unchanged)
     - name: Compute composite cache key from dependency SHAs
       id: shas
       shell: pwsh
@@ -94,7 +86,6 @@ runs:
         }) -join ';'
         "keypart=$keypart" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-    # Restore the assemblies cache — identical key format to your deps.yml
     - name: Restore cache (deps-assemblies)
       id: cache
       uses: actions/cache@v4
@@ -102,15 +93,13 @@ runs:
         path: deps-assemblies
         key: depsasm-${{ runner.os }}-${{ inputs.dotnet_version }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
 
-    # Build only on cache miss — logic moved to script but unchanged
     - name: Build dependencies (on cache miss)
       if: steps.cache.outputs.cache-hit != 'true'
       shell: pwsh
       run: |
-        $script = Join-Path $GITHUB_ACTION_PATH "scripts/Build-Dependencies.ps1"
-        & $script
+        $script = Join-Path $env:GITHUB_ACTION_PATH "scripts/Build-Dependencies.ps1"
+        & $script -Configuration "${{ inputs.configuration }}"
 
-    # Upload the assemblies artifact (exactly like your deps.yml)
     - name: Upload dependency assemblies
       uses: actions/upload-artifact@v4
       with:
