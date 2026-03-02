@@ -19,7 +19,7 @@ function Lines([string]$path) {
         return Get-Content $path |
             Where-Object { $_ -and -not $_.Trim().StartsWith("#") } |
             ForEach-Object { $_.Trim() } |
-            Where-Object { $_ -ne "" }
+            Where-Object { $_ -ne "" -and $_ -match "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(@[A-Za-z0-9._/-]+)?$" }
     }
     return @()
 }
