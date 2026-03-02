@@ -34,7 +34,7 @@ function Parse-RepoSpec([string]$spec) {
     return @{ Key = $spec; Ref = $ref }
 }
 
-# Determine prefer/fallback logic
+# Branch selection
 $Prefer   = $env:PR_BRANCH
 if (-not $Prefer -or $Prefer -eq "") { $Prefer = "feature/unknown" }
 
@@ -46,12 +46,16 @@ $cloned  = New-Object System.Collections.Generic.HashSet[string]
 $nameMap = @{}
 $pathMap = @{}
 
+function Get-FolderName([string]$ownerRepo) {
+    $parts = $ownerRepo.Split("/")
+    if ($parts.Length -ge 2) { return $parts[1] }
+    if ($parts.Length -eq 1 -and $parts[0] -ne "") { return $parts[0] }
+    return "unknown"
+}
+
 function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
 
-    $parts = $ownerRepo.Split("/")
-    if ($parts.Count -ne 2) { return $null }
-
-    $name = $parts[1]
+    $name = Get-FolderName $ownerRepo
     $path = Join-Path $depsDir $name
 
     if (-not (Test-Path (Join-Path $path ".git"))) {
@@ -131,9 +135,10 @@ function Build-Chain([string]$ownerRepo, [bool]$includeSelf=$false, [string]$ref
     return ,$chain
 }
 
-# ------------------- PHASE A -------------------
+# ---------------- PHASE A ----------------
 Write-Host "----- PHASE A: Caller dependencies from $DepsFile -----"
 $phaseA = New-Object System.Collections.Generic.List[string]
+
 foreach ($seed in (Lines $DepsFile)) {
     $parsed = Parse-RepoSpec $seed
     $chain = Build-Chain $parsed.Key $true $parsed.Ref
@@ -141,9 +146,10 @@ foreach ($seed in (Lines $DepsFile)) {
         if (-not $phaseA.Contains($item)) { $phaseA.Add($item) | Out-Null }
     }
 }
+
 if ($phaseA.Count -eq 0) { Write-Host "(none)" } else { $phaseA | ForEach-Object { Write-Host "A: $_" } }
 
-# ------------------- PHASE B -------------------
+# ---------------- PHASE B ----------------
 Write-Host "----- PHASE B: Extra repos + their own dependencies -----"
 $phaseB = New-Object System.Collections.Generic.List[string]
 
@@ -164,20 +170,30 @@ else {
     Write-Host "(none)"
 }
 
-# ------------------- MERGE -------------------
+# ---------------- MERGE ----------------
 $seen   = New-Object System.Collections.Generic.HashSet[string]
 $merged = New-Object System.Collections.Generic.List[string]
 
 foreach ($k in ($phaseA + $phaseB)) {
     if (-not $seen.Contains($k)) {
-        $seen.Add($k)     | Out-Null
-        $merged.Add($k)   | Out-Null
+        $seen.Add($k)   | Out-Null
+        $merged.Add($k) | Out-Null
     }
 }
 
+# SAFE FOLDER MAPPING
 $folderOrder = $merged | ForEach-Object {
-    if ($nameMap.ContainsKey($_)) { $nameMap[$_] }
-    else { ($_ -split "/")[1] }
+
+    if ($nameMap.ContainsKey($_)) {
+        $nameMap[$_]
+    }
+    else {
+        # SAFELY extract folder name
+        $parts = $_.Split("/")
+        if ($parts.Length -ge 2) { $parts[1] }
+        elseif ($parts.Length -eq 1) { $parts[0] }
+        else { "unknown" }
+    }
 }
 
 $folderOrder | Set-Content -Path $orderOut -Encoding utf8
@@ -185,15 +201,17 @@ $folderOrder | Set-Content -Path $orderOut -Encoding utf8
 Write-Host "== Final build order =="
 Get-Content $orderOut | ForEach-Object { Write-Host " - $_" }
 
-# ------------------- SELECTION SUMMARY -------------------
+# ---------------- SELECTION SUMMARY ----------------
 if (Test-Path $selectFile) {
     Write-Host "== Checkout selections =="
     foreach ($line in (Get-Content $selectFile)) {
         $t = $line.Split("|")
-        $repo   = $t[0]
-        $folder = $t[1]
-        $sel    = $t[2]
-        $sha    = $t[3]
-        Write-Host " - $repo (folder: $folder) -> $sel @ $sha"
+        if ($t.Length -ge 4) {
+            $repo   = $t[0]
+            $folder = $t[1]
+            $sel    = $t[2]
+            $sha    = $t[3]
+            Write-Host " - $repo (folder: $folder) -> $sel @ $sha"
+        }
     }
 }
