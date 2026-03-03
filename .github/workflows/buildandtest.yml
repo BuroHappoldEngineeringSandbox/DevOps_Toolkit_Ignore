@@ -525,64 +525,50 @@ jobs:
           owner: ${{ github.repository_owner }}
 
       - name: Clone missing dependencies
+        shell: pwsh
         env:
-          GH_TOKEN: ${{ steps.generate-token.outputs.token || secrets.GH_TOKEN || github.token }}
+            GH_TOKEN: ${{ steps.generate-token.outputs.token || secrets.GH_TOKEN || github.token }}
         run: |
-          $missingDeps = '${{ steps.get-missing-deps.outputs.missing-deps }}' -split ',' | Where-Object { $_ -ne "" }
-          $branchMap = '${{ needs.setup-configurations-and-dependencies.outputs.branch-map }}' | ConvertFrom-Json
-          
-          if ($missingDeps.Count -eq 0) {
+            $missingDeps = '${{ steps.get-missing-deps.outputs.missing-deps }}' -split ',' | Where-Object { $_ -ne '' }
+            $branchMap   = '${{ needs.setup-configurations-and-dependencies.outputs.branch-map }}' | ConvertFrom-Json
+
+            if ($missingDeps.Count -eq 0) {
             Write-Host "No missing dependencies to clone"
             exit 0
-          }
-          
-          # Create repositories directory
-          New-Item -ItemType Directory -Force -Path "Repositories"
-          
-          # Process only missing dependencies
-          foreach ($dep in $missingDeps) {
-              $target_branch = $branchMap.$dep
-              Write-Host "Processing missing dependency: $dep (branch: $target_branch)"
-              
-              # Extract repo name from dependency
-              $repo_name = $dep.Split('/')[-1]
-              $repo_url = "https://github.com/$dep.git"
-              
-              Write-Host "Cloning repository: $repo_name from $repo_url"
-              
-              try {
-                git clone $repo_url "Repositories\$repo_name"
-                
-                # Checkout the pre-determined branch (we know it exists)
-                Push-Location "Repositories\$repo_name"
-                git checkout "$target_branch"
-                Write-Host "✓ Checked out branch: $target_branch"
-                Pop-Location
-                
-                Write-Host "Successfully cloned $repo_name"
-                
-                # Check if .sln file exists in base folder
-                $sln_files = Get-ChildItem "Repositories\$repo_name" -Filter "*.sln" -File
-                if ($sln_files.Count -gt 0) {
-                  Write-Host "✓ Found .sln file in $repo_name - keeping repository"
-                  $repo_name | Add-Content "valid_repos.txt" -Encoding UTF8
-                } else {
-                  Write-Host "✗ No .sln file found in base folder of $repo_name - Repo not built"
-                }
-              } catch {
-                Write-Host "Failed to clone $repo_name"
-              }
             }
-          }
-          
-          # Show summary
-          if (Test-Path "valid_repos.txt") {
+
+            New-Item -ItemType Directory -Force -Path "Repositories" | Out-Null
+
+            foreach ($dep in $missingDeps) {
+            $target_branch = $branchMap.$dep
+            Write-Host "Processing missing dependency: $dep (branch: $target_branch)"
+
+            $repo_name = $dep.Split('/')[-1]
+            $repo_url  = "https://github.com/$dep.git"
+
+            try {
+                git clone $repo_url "Repositories/$repo_name"
+                Push-Location "Repositories/$repo_name"
+                git checkout "$target_branch"
+                Pop-Location
+
+                $sln_files = Get-ChildItem "Repositories/$repo_name" -Filter '*.sln' -File
+                if ($sln_files.Count -gt 0) {
+                Add-Content "valid_repos.txt" $repo_name -Encoding UTF8
+                } else {
+                Write-Host "✗ No .sln file in $repo_name base folder - Repo not built"
+                }
+            } catch {
+                Write-Host "Failed to clone $repo_name"
+            }
+            }
+
+            if (Test-Path "valid_repos.txt") {
             Write-Host "Valid repositories to compile:"
             Get-Content "valid_repos.txt"
-          } else {
+            } else {
             Write-Host "No valid repositories found with .sln files"
-          }
-        shell: pwsh
+            }
 
       - name: Analyze dependency order
         run: |
