@@ -12,26 +12,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      # Single checkout that works for PRs INCLUDING forks
       - name: Checkout caller repository
         uses: actions/checkout@v4
         with:
-          # For PRs, checkout the HEAD commit automatically
-        #   ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
-      # Run Super-Linter (changed files only)
-      - name: Run Super-Linter
+      - name: Run Super-Linter (changed files only)
         uses: github/super-linter@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        #   DEFAULT_BRANCH: ${{ inputs.default_branch }}
 
-          # Lint only PR changes (keeps it fast)
+          # Always lint ONLY changed files
           VALIDATE_ALL_CODEBASE: false
 
-          # Enable the linters you want
+          # Enable desired linters
           VALIDATE_CSHARP: true
           VALIDATE_YAML: true
           VALIDATE_JSON: true
