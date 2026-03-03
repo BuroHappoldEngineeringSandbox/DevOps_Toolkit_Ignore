@@ -1,166 +1,137 @@
 name: BHoM Static Checks (Reusable)
 
 on:
-  workflow_call:
-    inputs:
-      dotnet_version:
-        type: string
-        default: "10.x"
-      configuration:
-        type: string
-        default: "Release"
-      token:
-        type: string
-        default: ""
-      delta_mode:            # Currently unused while compliance is commented out
-        type: boolean
-        default: false
-      default_branch:
-        type: string
-        default: "main"
+    workflow_call:
+        inputs:
+            dotnet_version:
+                type: string
+                default: "10.x"
+            configuration:
+                type: string
+                default: "Release"
+            token:
+                type: string
+                default: ""
+            delta_mode: # Currently unused while compliance is commented out
+                type: boolean
+                default: false
+            default_branch:
+                type: string
+                default: "main"
 
 jobs:
-  # -------------------------------------------------
-  # 1) Linting / Formatting with Super-Linter
-  #    - Includes fork-safe checkout
-  #    - Fixes "GITHUB_SHA reference doesn't exist" by checking out the exact SHA with full history
-  # -------------------------------------------------
-  lint-format:
-    runs-on: ubuntu-latest
-    steps:
-      # Push or same-repo PR
-      - name: Checkout caller repo at exact SHA (push / same-repo PR)
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ github.sha }}
-          fetch-depth: 0
+    # -------------------------------------------------
+    # 1) Linting / Formatting with Super-Linter
+    #    - Includes fork-safe checkout
+    #    - Fixes "GITHUB_SHA reference doesn't exist" by checking out the exact SHA with full history
+    # -------------------------------------------------
+    lint-format:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Run Super-Linter (changed files only)
+              uses: github/super-linter@v6
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  DEFAULT_BRANCH: ${{ inputs.default_branch }}
 
-      # Fork PR (checkout the head repository + head SHA)
-      - name: Checkout PR HEAD (fork PR)
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-          # persist-credentials: false  # uncomment if you harden permissions
+                  # Lint only changed files — never full repo
+                  VALIDATE_ALL_CODEBASE: false
 
-      # Super-Linter across codebase; runs fast, no build required
-      - name: Run Super-Linter
-        uses: github/super-linter@v6
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DEFAULT_BRANCH: ${{ inputs.default_branch }}
+                  # Linters to enable
+                  VALIDATE_CSHARP: true
+                  VALIDATE_YAML: true
+                  VALIDATE_JSON: true
+                  VALIDATE_XML: true
+                  VALIDATE_MARKDOWN: true
+                  VALIDATE_GITHUB_ACTIONS: true
 
-          # Enable specific linters (adjust as needed)
-          VALIDATE_CSHARP: true
-          VALIDATE_YAML: true
-          VALIDATE_JSON: true
-          VALIDATE_XML: true
-          VALIDATE_MARKDOWN: true
-          VALIDATE_GITHUB_ACTIONS: true
+    # -------------------------------------------------
+    # 2) SAST / Security scanning (commented out for now)
+    #    - Enable later when ready
+    # -------------------------------------------------
+    # sast:
+    #   runs-on: ubuntu-latest
+    #   needs: [lint-format]
+    #   steps:
+    #     - name: Checkout (same as above; copy the fork-safe pattern if you need git history)
+    #       uses: actions/checkout@v4
+    #       with:
+    #         fetch-depth: 0
+    #     - name: Run SAST
+    #       run: echo "Run Semgrep / CodeQL init-or-upload / dotnet analyzers here"
 
-          # For PRs only lint the diff; for pushes lint the full codebase
-          VALIDATE_ALL_CODEBASE: ${{ github.event_name != 'pull_request' && 'true' || 'false' }}
-
-      # Optional: enforce .editorconfig formatting explicitly
-      - name: Setup .NET (for dotnet format)
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ inputs.dotnet_version }}
-
-      - name: Formatting check (dotnet format)
-        run: dotnet format --verify-no-changes
-
-  # -------------------------------------------------
-  # 2) SAST / Security scanning (commented out for now)
-  #    - Enable later when ready
-  # -------------------------------------------------
-  # sast:
-  #   runs-on: ubuntu-latest
-  #   needs: [lint-format]
-  #   steps:
-  #     - name: Checkout (same as above; copy the fork-safe pattern if you need git history)
-  #       uses: actions/checkout@v4
-  #       with:
-  #         fetch-depth: 0
-  #     - name: Run SAST
-  #       run: echo "Run Semgrep / CodeQL init-or-upload / dotnet analyzers here"
-
-  # -------------------------------------------------
-  # 3) Compliance (test_toolkit + custom Roslyn) — commented out for now
-  #    - Keep this block for when you're ready to re-enable
-  # -------------------------------------------------
-  # compliance:
-  #   runs-on: windows-latest
-  #   needs: [lint-format]       # , sast  <- add if you enable SAST
-  #   permissions:
-  #     contents: read
-  #     pull-requests: read
-  #     security-events: write   # for SARIF upload
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #       with:
-  #         fetch-depth: 0
-  #
-  #     - uses: actions/setup-dotnet@v4
-  #       with:
-  #         dotnet-version: ${{ inputs.dotnet_version }}
-  #
-  #     # Build seeds-only (Test_Toolkit)
-  #     - name: Resolve Dependencies (Compliance seeds-only)
-  #       uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
-  #       with:
-  #         mode: seeds
-  #         seeds: |
-  #           BHoM/Test_Toolkit
-  #         dotnet_version: ${{ inputs.dotnet_version }}
-  #         configuration: ${{ inputs.configuration }}
-  #         token: ${{ inputs.token }}
-  #
-  #     - name: Stage assemblies
-  #       uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
-  #       with:
-  #         source: "deps-assemblies"
-  #
-  #     - name: Checkout DevOps Toolkit (runner source)
-  #       uses: actions/checkout@v4
-  #       with:
-  #         repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
-  #         path: toolkit_repo
-  #
-  #     - name: Publish Compliance Runner
-  #       run: |
-  #         $proj = "toolkit_repo/src/Carbon/ComplianceRunner/Carbon.ComplianceRunner.csproj"
-  #         if (-not (Test-Path $proj)) {
-  #           $proj = "toolkit_repo/src/Compliance/ComplianceRunner/ComplianceRunner.csproj"
-  #         }
-  #         dotnet publish $proj -c ${{ inputs.configuration }} -o out/runner
-  #
-  #     # Determine scan scope (PR delta or full repo) — when you re-enable
-  #     - name: Determine scan files
-  #       id: scan
-  #       run: |
-  #         if ("${{ github.event_name }}" -eq "pull_request") {
-  #             git fetch origin ${{ github.base_ref }}
-  #             $files = git diff --name-only --diff-filter=ACMRT origin/${{ github.base_ref }}...HEAD |
-  #               Where-Object { $_.ToLower().EndsWith(".cs") }
-  #         } else {
-  #             $files = Get-ChildItem -Recurse -Include *.cs | Select-Object -Expand FullName
-  #         }
-  #         Set-Content -Path scan_files.txt -Value ($files -join "`n")
-  #         "count=$($files.Count)" | Out-File $env:GITHUB_OUTPUT -Append
-  #
-  #     - name: Run Compliance
-  #       if: steps.scan.outputs.count != '0'
-  #       run: |
-  #         & "out/runner/ComplianceRunner.exe" "." --sarif compliance.sarif
-  #
-  #     - name: Upload SARIF
-  #       if: steps.scan.outputs.count != '0'
-  #       uses: github/codeql-action/upload-sarif@v3
-  #       with:
-  #         sarif_file: compliance.sarif
-  #         category: "bhom-compliance"
+    # -------------------------------------------------
+    # 3) Compliance (test_toolkit + custom Roslyn) — commented out for now
+    #    - Keep this block for when you're ready to re-enable
+    # -------------------------------------------------
+    # compliance:
+    #   runs-on: windows-latest
+    #   needs: [lint-format]       # , sast  <- add if you enable SAST
+    #   permissions:
+    #     contents: read
+    #     pull-requests: read
+    #     security-events: write   # for SARIF upload
+    #   steps:
+    #     - uses: actions/checkout@v4
+    #       with:
+    #         fetch-depth: 0
+    #
+    #     - uses: actions/setup-dotnet@v4
+    #       with:
+    #         dotnet-version: ${{ inputs.dotnet_version }}
+    #
+    #     # Build seeds-only (Test_Toolkit)
+    #     - name: Resolve Dependencies (Compliance seeds-only)
+    #       uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
+    #       with:
+    #         mode: seeds
+    #         seeds: |
+    #           BHoM/Test_Toolkit
+    #         dotnet_version: ${{ inputs.dotnet_version }}
+    #         configuration: ${{ inputs.configuration }}
+    #         token: ${{ inputs.token }}
+    #
+    #     - name: Stage assemblies
+    #       uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
+    #       with:
+    #         source: "deps-assemblies"
+    #
+    #     - name: Checkout DevOps Toolkit (runner source)
+    #       uses: actions/checkout@v4
+    #       with:
+    #         repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
+    #         path: toolkit_repo
+    #
+    #     - name: Publish Compliance Runner
+    #       run: |
+    #         $proj = "toolkit_repo/src/Carbon/ComplianceRunner/Carbon.ComplianceRunner.csproj"
+    #         if (-not (Test-Path $proj)) {
+    #           $proj = "toolkit_repo/src/Compliance/ComplianceRunner/ComplianceRunner.csproj"
+    #         }
+    #         dotnet publish $proj -c ${{ inputs.configuration }} -o out/runner
+    #
+    #     # Determine scan scope (PR delta or full repo) — when you re-enable
+    #     - name: Determine scan files
+    #       id: scan
+    #       run: |
+    #         if ("${{ github.event_name }}" -eq "pull_request") {
+    #             git fetch origin ${{ github.base_ref }}
+    #             $files = git diff --name-only --diff-filter=ACMRT origin/${{ github.base_ref }}...HEAD |
+    #               Where-Object { $_.ToLower().EndsWith(".cs") }
+    #         } else {
+    #             $files = Get-ChildItem -Recurse -Include *.cs | Select-Object -Expand FullName
+    #         }
+    #         Set-Content -Path scan_files.txt -Value ($files -join "`n")
+    #         "count=$($files.Count)" | Out-File $env:GITHUB_OUTPUT -Append
+    #
+    #     - name: Run Compliance
+    #       if: steps.scan.outputs.count != '0'
+    #       run: |
+    #         & "out/runner/ComplianceRunner.exe" "." --sarif compliance.sarif
+    #
+    #     - name: Upload SARIF
+    #       if: steps.scan.outputs.count != '0'
+    #       uses: github/codeql-action/upload-sarif@v3
+    #       with:
+    #         sarif_file: compliance.sarif
+    #         category: "bhom-compliance"
