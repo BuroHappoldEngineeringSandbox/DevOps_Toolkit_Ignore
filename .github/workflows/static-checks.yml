@@ -1,0 +1,125 @@
+name: BHoM Static Checks (Reusable)
+on:
+    workflow_call:
+        inputs:
+            dotnet_version: { type: string, default: "10.x" }
+            configuration: { type: string, default: "Release" }
+            token: { type: string, default: "" }
+            delta_mode: { type: boolean, default: false }
+
+jobs:
+    # -------------------------------------------------
+    # 1. Linting / Formatting
+    # -------------------------------------------------
+    lint-format:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            # -----------------------------
+            # Super-Linter (C#, JSON, YAML, XML, Markdown)
+            # -----------------------------
+            - name: Run Super-Linter
+              uses: github/super-linter@v6
+              env:
+                  DEFAULT_BRANCH: main
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+                  # Enable specific linters
+                  VALIDATE_CSHARP: true
+                  VALIDATE_YAML: true
+                  VALIDATE_JSON: true
+                  VALIDATE_XML: true
+                  VALIDATE_MARKDOWN: true
+                  VALIDATE_GITHUB_ACTIONS: true
+
+            # Optional extra formatting enforcement
+            - name: Formatting check (dotnet format)
+              run: |
+                  dotnet format --verify-no-changes
+
+#   # -------------------------------------------------
+#   # 2. SAST / security scanning (optional)
+#   # -------------------------------------------------
+#   sast:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - name: Run security analyzers
+#         run: echo "Run SAST here"
+
+#   # -------------------------------------------------
+#   # 3. Compliance (test_toolkit)
+#   # -------------------------------------------------
+#   compliance:
+#     runs-on: windows-latest
+#     needs: [lint-format, sast]
+#     permissions:
+#       contents: read
+#       pull-requests: read
+#       security-events: write
+
+#     steps:
+#       - uses: actions/checkout@v4
+#         with:
+#           fetch-depth: 0
+
+#       - uses: actions/setup-dotnet@v4
+#         with:
+#           dotnet-version: ${{ inputs.dotnet_version }}
+
+#       # Build seeds-only (Test_Toolkit)
+#       - name: Resolve Dependencies (Compliance seeds-only)
+#         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
+#         with:
+#           mode: seeds
+#           seeds: |
+#             BHoM/Test_Toolkit
+#           dotnet_version: ${{ inputs.dotnet_version }}
+#           configuration: ${{ inputs.configuration }}
+#           token: ${{ inputs.token }}
+
+#       - name: Stage assemblies
+#         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
+#         with:
+#           source: "deps-assemblies"
+
+#       - name: Checkout DevOps Toolkit (runner source)
+#         uses: actions/checkout@v4
+#         with:
+#           repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
+#           path: toolkit_repo
+
+#       - name: Publish Compliance Runner
+#         run: |
+#           $proj = "toolkit_repo/src/Carbon/ComplianceRunner/Carbon.ComplianceRunner.csproj"
+#           if (-not (Test-Path $proj)) {
+#             $proj = "toolkit_repo/src/Compliance/ComplianceRunner/ComplianceRunner.csproj"
+#           }
+#           dotnet publish $proj -c ${{ inputs.configuration }} -o out/runner
+
+#       # Determine scan files (delta or full)
+#       - name: Determine scan
+#         id: scan
+#         run: |
+#           if ("${{ inputs.delta_mode }}" -eq "true" -and "${{ github.event_name }}" -eq "pull_request") {
+#               git fetch origin ${{ github.base_ref }}
+#               $files = git diff --name-only --diff-filter=ACMRT origin/${{ github.base_ref }}...HEAD |
+#                 Where-Object { $_.ToLower().EndsWith(".cs") }
+#           } else {
+#               $files = Get-ChildItem -Recurse -Include *.cs | Select-Object -Expand FullName
+#           }
+#           Set-Content -Path scan_files.txt -Value ($files -join "`n")
+#           "count=$($files.Count)" | Out-File $env:GITHUB_OUTPUT -Append
+
+#       - name: Run Compliance
+#         if: steps.scan.outputs.count != '0'
+#         run: |
+#           & "out/runner/ComplianceRunner.exe" "." --sarif compliance.sarif
+
+#       - name: Upload SARIF
+#         if: steps.scan.outputs.count != '0'
+#         uses: github/codeql-action/upload-sarif@v3
+#         with:
+#           sarif_file: compliance.sarif
+#           category: "bhom-compliance"
