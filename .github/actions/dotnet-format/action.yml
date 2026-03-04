@@ -16,9 +16,10 @@ runs:
 
     - name: Get changed files
       id: changed-files
-      uses: tj-actions/changed-files@v47
-      with:
-        files: '**/*.cs'
+      shell: bash
+      run: |
+        files=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.cs' | tr '\n' ' ')
+        echo "all_changed_files=$files" >> $GITHUB_OUTPUT
 
     # - name: Debug changed files
     #   shell: bash
