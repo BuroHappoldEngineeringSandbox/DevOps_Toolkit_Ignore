@@ -19,5 +19,5 @@ jobs:
         - name: Run .NET Lint
           uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/dotnet-format@main
           with:
-            dotnet-version: ${{ inputs.dotnet-version }}
+            dotnet_version: ${{ inputs.dotnet_version }}
             working-directory: ${{ inputs.working-directory }}

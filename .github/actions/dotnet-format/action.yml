@@ -1,4 +1,4 @@
-name: .NET Lint
+name: .NET Format
 description: Validates code formatting using dotnet format
 
 inputs:
@@ -18,7 +18,16 @@ runs:
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
 
+    - name: Get changed files
+      id: changed-files
+      uses: tj-actions/changed-files@v44
+      with:
+        files: |
+          ${{ inputs.working-directory }}/**/*.cs
+          ${{ inputs.working-directory }}/**/*.csproj
+
     - name: Check formatting
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: dotnet format --verify-no-changes --verbosity diagnostic
+      run: dotnet format --verify-no-changes --verbosity diagnostic \
+        --include ${{ steps.changed-files.outputs.all_changed_files }}
