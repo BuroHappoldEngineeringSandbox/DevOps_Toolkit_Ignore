@@ -2,7 +2,7 @@ name: .NET Format
 description: Validates code formatting using dotnet format
 
 inputs:
-  dotnet_version:
+  dotnet-version:
     description: .NET SDK version
     default: '8.x'
 
@@ -16,7 +16,7 @@ runs:
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: ${{ inputs.dotnet_version }}
+        dotnet-version: ${{ inputs.dotnet-version }}
 
     - name: Get changed files
       id: changed-files

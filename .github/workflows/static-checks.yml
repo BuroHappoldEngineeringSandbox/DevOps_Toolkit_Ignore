@@ -3,7 +3,7 @@ name: Static Checks
 on:
   workflow_call:
     inputs:
-      dotnet_version:
+      dotnet-version:
         type: string
         required: false
       working-directory:
@@ -19,5 +19,5 @@ jobs:
         - name: Run .NET Format
           uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/dotnet-format@main
           with:
-            dotnet_version: ${{ inputs.dotnet_version }}
+            dotnet_version: ${{ inputs.dotnet-version }}
             working-directory: ${{ inputs.working-directory }}
