@@ -39,6 +39,7 @@ runs:
         for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
           dir=$(dirname "$file")
           while [[ "$dir" != "." && "$dir" != "/" ]]; do
+            csproj=$(find "$dir" -maxdepth 1 -name "*.csproj" | head -1)
             if [ -n "$csproj" ]; then
               projects["$csproj"]=1
               break
