@@ -27,5 +27,5 @@ runs:
     - name: Check formatting
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: dotnet format --verify-no-changes --verbosity diagnostic \
-        --include ${{ steps.changed-files.outputs.all_changed_files }}
+      run:
+        dotnet format --verify-no-changes --verbosity diagnostic --include ${{ steps.changed-files.outputs.all_changed_files }}
