@@ -2,11 +2,11 @@ name: .NET Format
 description: Validates code formatting using dotnet format
 
 inputs:
-  dotnet-version:
+  dotnet_version:
     description: .NET SDK version
     default: '8.x'
 
-  working-directory:
+  working_directory:
     description: Path to the solution/project root
     default: "."
 
@@ -16,7 +16,7 @@ runs:
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
       with:
-        dotnet-version: ${{ inputs.dotnet-version }}
+        dotnet-version: ${{ inputs.dotnet_version }}
 
     - name: Get changed files
       id: changed-files
@@ -27,6 +27,6 @@ runs:
     - name: Check formatting
       if: steps.changed-files.outputs.all_changed_files == true
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      working-directory: ${{ inputs.working_directory }}
       run:
         dotnet format --verify-no-changes --verbosity diagnostic --include ${{ steps.changed-files.outputs.all_changed_files }}
