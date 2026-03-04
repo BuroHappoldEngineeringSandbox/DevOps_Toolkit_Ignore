@@ -19,5 +19,5 @@ jobs:
         - name: Run .NET Format
           uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/dotnet-format@main
           with:
-            dotnet_version: ${{ inputs.dotnet-version }}
+            dotnet-version: ${{ inputs.dotnet-version }}
             working-directory: ${{ inputs.working-directory }}
