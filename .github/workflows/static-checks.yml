@@ -5,13 +5,13 @@ on:
     inputs:
       dotnet_version:
         type: string
-        default: "8.x"
+        required: false
       working-directory:
         type: string
-        default: '.'
+        required: false
 
 jobs:
-  lint:
+  format:
     runs-on: ubuntu-latest
     steps:
         - uses: actions/checkout@v4
