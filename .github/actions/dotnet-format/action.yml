@@ -33,5 +33,21 @@ runs:
     - name: Check formatting
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run:
-        dotnet format --verify-no-changes --verbosity diagnostic --include ${{ steps.changed-files.outputs.all_changed_files }}
+      run: |
+        declare -A projects
+
+        for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+          dir=$(dirname "$file")
+          while [[ "$dir" != "." && "$dir" != "/" ]]; do
+            if [ -n "$csproj" ]; then
+              projects["$csproj"]=1
+              break
+            fi
+            dir=$(dirname "$dir")
+          done
+        done
+
+        for csproj in "${!projects[@]}"; do
+          echo "Checking formatting for $csproj"
+          dotnet format --verify-no-changes --verbosity diagnostic --include ${{ steps.changed-files.outputs.all_changed_files }}
+        done
