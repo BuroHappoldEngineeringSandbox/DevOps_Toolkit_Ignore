@@ -16,7 +16,7 @@ jobs:
     steps:
         - uses: actions/checkout@v4
 
-        - name: Run .NET Lint
+        - name: Run .NET Format
           uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/dotnet-format@main
           with:
             dotnet_version: ${{ inputs.dotnet_version }}

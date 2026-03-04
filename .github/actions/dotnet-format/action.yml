@@ -4,7 +4,7 @@ description: Validates code formatting using dotnet format
 inputs:
   dotnet_version:
     description: .NET SDK version
-    default: "8.x"
+    default: '8.x'
 
   working-directory:
     description: Path to the solution/project root
