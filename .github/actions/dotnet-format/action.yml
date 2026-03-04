@@ -31,7 +31,6 @@ runs:
         echo "Changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
 
     - name: Check formatting
-      if: steps.changed-files.outputs.all_changed_files == true
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run:
