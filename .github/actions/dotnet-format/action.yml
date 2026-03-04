@@ -22,9 +22,7 @@ runs:
       id: changed-files
       uses: tj-actions/changed-files@v44
       with:
-        files: |
-          ${{ inputs.working-directory }}/**/*.cs
-          ${{ inputs.working-directory }}/**/*.csproj
+        files: '**/*.cs'
 
     - name: Check formatting
       shell: bash
