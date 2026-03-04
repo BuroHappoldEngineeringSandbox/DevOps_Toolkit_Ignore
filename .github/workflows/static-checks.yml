@@ -19,3 +19,11 @@ jobs:
           uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/dotnet-format@main
           with:
             dotnet-version: ${{ inputs.dotnet-version || '8.x' }}
+
+  # compliance: 
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+  #     - name: Run Compliance Checks
+  #       uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/compliance@main
