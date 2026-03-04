@@ -24,6 +24,12 @@ runs:
       with:
         files: '**/*.cs'
 
+    - name: Debug changed files
+      shell: bash
+      run: |
+        echo "Any Changed ${{ steps.changed-files.outputs.any_changed_files }}"
+        echo "Changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
+
     - name: Check formatting
       if: steps.changed-files.outputs.all_changed_files == true
       shell: bash
