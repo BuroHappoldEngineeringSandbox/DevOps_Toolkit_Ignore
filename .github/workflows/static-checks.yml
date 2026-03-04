@@ -1,6 +1,14 @@
 name: Static Checks
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '**/*.cs'
+      - '**/*.csproj'
+      - '**/*.sln'
+
   workflow_call:
     inputs:
       dotnet_version:
@@ -8,16 +16,64 @@ on:
         default: "8.x"
       working-directory:
         type: string
-        default: '.'
+        default: "."
 
 jobs:
-  lint:
+  determine_changes:
     runs-on: ubuntu-latest
-    steps:
-        - uses: actions/checkout@v4
+    outputs:
+      dirs: ${{ steps.collect_dirs.outputs.dirs }}
+      should_run: ${{ steps.collect_dirs.outputs.should_run }}
 
-        - name: Run .NET Lint
-          uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/dotnet-lint@main
-          with:
-            dotnet-version: ${{ inputs.dotnet-version }}
-            working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect changed .NET files
+        id: changed
+        shell: bash
+        run: |
+          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+            | grep -E '\.cs$|\.csproj$|\.sln$' || true)
+
+          echo "changed=$CHANGED" >> $GITHUB_OUTPUT
+
+      - name: Collect unique directories
+        id: collect_dirs
+        shell: bash
+        run: |
+          if [ -z "${{ steps.changed.outputs.changed }}" ]; then
+            echo "No relevant .NET files changed."
+            echo 'should_run=false' >> $GITHUB_OUTPUT
+            echo 'dirs=[]' >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          DIRS=$(echo "${{ steps.changed.outputs.changed }}" \
+            | xargs -n1 dirname | sort -u)
+
+          JSON=$(printf '%s\n' "$DIRS" | jq -R . | jq -s .)
+
+          echo "Affected directories:"
+          echo "$DIRS"
+
+          echo "dirs=$JSON" >> $GITHUB_OUTPUT
+          echo "should_run=true" >> $GITHUB_OUTPUT
+
+  lint:
+    needs: determine_changes
+    if: needs.determine_changes.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: ${{ fromJson(needs.determine_changes.outputs.dirs) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint changed directory
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/dotnet-lint@main
+        with:
+          dotnet_version: ${{ inputs.dotnet_version }}
+          working-directory: ${{ matrix.directory }}
