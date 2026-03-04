@@ -20,29 +20,29 @@ runs:
       with:
         files: '**/*.cs'
 
-    - name: Debug changed files
-      shell: bash
-      run: |
-        echo "Any Changed ${{ steps.changed-files.outputs.any_changed }}"
-        echo "Changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
+    # - name: Debug changed files
+    #   shell: bash
+    #   run: |
+    #     echo "Any Changed ${{ steps.changed-files.outputs.any_changed }}"
+    #     echo "Changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
 
-    - name: Debug project discovery
-      shell: bash
-      run: |
-        for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
-          echo "--- Processing $file ---"
-          dir=$(dirname "$file")
-          echo "Checking directory: $dir"
-          while [[ "$dir" != "." && "$dir" != "/" ]]; do
-            csproj=$(find "$dir" -maxdepth 1 -name "*.csproj" | head -1)
-            echo "   Checking '$dir -> $csproj'"
-            if [ -n "$csproj" ]; then
-              echo "   Found project: $csproj"
-              break
-            fi
-            dir=$(dirname "$dir")
-          done
-        done
+    # - name: Debug project discovery
+    #   shell: bash
+    #   run: |
+    #     for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+    #       echo "--- Processing $file ---"
+    #       dir=$(dirname "$file")
+    #       echo "Checking directory: $dir"
+    #       while [[ "$dir" != "." && "$dir" != "/" ]]; do
+    #         csproj=$(find "$dir" -maxdepth 1 -name "*.csproj" | head -1)
+    #         echo "   Checking '$dir -> $csproj'"
+    #         if [ -n "$csproj" ]; then
+    #           echo "   Found project: $csproj"
+    #           break
+    #         fi
+    #         dir=$(dirname "$dir")
+    #       done
+    #     done
 
     - name: Check formatting
       shell: bash
@@ -69,7 +69,6 @@ runs:
 
         for csproj in "${!projects[@]}"; do
           echo "::group::dotnet format - $csproj"
-          echo "Running dotnet format against $csproj"
           dotnet format "$csproj" --verify-no-changes --verbosity diagnostic --include ${{ steps.changed-files.outputs.all_changed_files }} || failed=1
           echo "::endgroup::"
         done
