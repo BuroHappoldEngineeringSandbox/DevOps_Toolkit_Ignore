@@ -66,7 +66,15 @@ runs:
           done
         done
 
+        if [ ${#projects[@]} -eq 0 ]; then
+          echo "No .csproj files found for changed files. Skipping formatting check."
+          exit 0
+        fi
+
+        failed=0
         for csproj in "${!projects[@]}"; do
-          echo "Checking formatting for $csproj"
-          dotnet format --verify-no-changes --verbosity diagnostic --include ${{ steps.changed-files.outputs.all_changed_files }}
+          echo "Running dotnet format against $csproj"
+          dotnet format "$csproj" --verify-no-changes --verbosity diagnostic --include ${{ steps.changed-files.outputs.all_changed_files }} || failed=1
         done
+
+        exit $failed
