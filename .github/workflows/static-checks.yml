@@ -6,9 +6,6 @@ on:
       dotnet-version:
         type: string
         required: false
-      working-directory:
-        type: string
-        required: false
 
 jobs:
   format:
@@ -22,4 +19,3 @@ jobs:
           uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/dotnet-format@main
           with:
             dotnet-version: ${{ inputs.dotnet-version || '8.x' }}
-            working-directory: ${{ inputs.working-directory || '.' }}

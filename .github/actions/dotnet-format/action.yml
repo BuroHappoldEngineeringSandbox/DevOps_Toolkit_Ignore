@@ -6,10 +6,6 @@ inputs:
     description: .NET SDK version
     default: '8.x'
 
-  working-directory:
-    description: Path to the solution/project root
-    default: "."
-
 runs:
   using: composite
   steps:
@@ -27,7 +23,7 @@ runs:
     - name: Debug changed files
       shell: bash
       run: |
-        echo "Any Changed ${{ steps.changed-files.outputs.any_changed_files }}"
+        echo "Any Changed ${{ steps.changed-files.outputs.any_changed }}"
         echo "Changed files: ${{ steps.changed-files.outputs.all_changed_files }}"
 
     - name: Debug project discovery
@@ -50,7 +46,6 @@ runs:
 
     - name: Check formatting
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
       run: |
         declare -A projects
         failed=0
