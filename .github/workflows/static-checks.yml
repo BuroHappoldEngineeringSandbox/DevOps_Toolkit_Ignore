@@ -1,36 +1,23 @@
-name: BHoM Static Checks (Reusable)
+name: Static Checks
 
 on:
   workflow_call:
     inputs:
-      default_branch:
+      dotnet_version:
         type: string
-        default: "main"
+        default: "8.x"
+      working-directory:
+        type: string
+        default: '.'
 
 jobs:
   lint:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout caller repository
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ github.sha }}
-          fetch-depth: 0
+        - uses: actions/checkout@v4
 
-      - name: Run Super-Linter (changed files only)
-        uses: github/super-linter@v6
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          # Always lint ONLY changed files
-          VALIDATE_ALL_CODEBASE: false
-
-          # Enable desired linters
-          VALIDATE_CSHARP: true
-          VALIDATE_YAML: true
-          VALIDATE_JSON: true
-          VALIDATE_XML: true
-          VALIDATE_MARKDOWN: true
-          VALIDATE_GITHUB_ACTIONS: true
+        - name: Run .NET Lint
+          uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/dotnet-lint@main
+          with:
+            dotnet-version: ${{ inputs.dotnet-version }}
+            working-directory: ${{ inputs.working-directory }}
