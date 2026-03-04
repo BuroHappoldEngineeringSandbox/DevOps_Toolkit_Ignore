@@ -1,0 +1,24 @@
+name: .NET Lint
+description: Validates code formatting using dotnet format
+
+inputs:
+  dotnet_version:
+    description: .NET SDK version
+    default: "8.x"
+
+  working-directory:
+    description: Path to the solution/project root
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
+
+    - name: Check formatting
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: dotnet format --verify-no-changes --verbosity diagnostic
