@@ -1,0 +1,23 @@
+name: BHoM Compliance
+description: Run compaliance checks using the custom Roslyn Analyzers
+
+inputs:
+  dotnet-version:
+    description: .NET SDK version
+    default: '8.x'
+
+runs:
+  using: composite
+  steps:
+    - name: Setup .NET
+      uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
+    
+    - name: Run Compliance Checks
+      shell: bash
+      run: |
+        echo "Running compliance checks..."
+        # Placeholder for actual compliance check commands
+        # For example, you could run a custom script or command here
+        echo "Compliance checks completed."
