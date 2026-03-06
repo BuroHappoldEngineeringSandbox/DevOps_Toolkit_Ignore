@@ -14,66 +14,71 @@ public class Annotation
     public string FilePath { get; set; } = "";
     public int LineStart { get; set; }
     public int LineEnd { get; set; }
+    public int ColumnStart { get; set; }
+    public int ColumnEnd { get; set; }
     /// <summary>
     /// "failure" (for Error) or "warning" (for Warning) — matches GitHub's expected values
     /// </summary>
     public string Level { get; set; } = "warning";
     public string Message { get; set; } = "";
+    /// <summary>
+    /// The check method name (e.g. "IsUsingDeprecatedEnumerate") used as the SARIF ruleId.
+    /// Falls back to the checkType string when not present.
+    /// </summary>
+    public string RuleName { get; set; } = "";
+    /// <summary>
+    /// Documentation URL from MessageAttribute.DocumentationLink — surfaced as SARIF helpUri.
+    /// </summary>
+    public string DocumentationLink { get; set; } = "";
 }
 
 public static class AnnotationConvert
 {
     /// <summary>
-    /// Drop-in local equivalent of BHoMBot's IToAnnotation().
-    /// It extracts:
-    ///   - Location.FilePath
-    ///   - Location.Line.Start.Line
-    ///   - Location.Line.End.Line
-    /// and maps:
-    ///   - TestStatus.Error  -> "failure"
-    ///   - TestStatus.Warning-> "warning"
-    /// Uses reflection to stay compatible with the ProgramData DLLs you’re referencing.
-    /// 
-    /// Based on the BHoMBot code you provided:
-    ///   FilePath = error.Location.FilePath
-    ///   LineStart = error.Location.Line.Start.Line
-    ///   LineEnd   = error.Location.Line.End.Line
-    ///   Level     = Error ? Failure : Warning
-    ///   Message   = error.Message
-    /// (BH.Bot.CI Convert/Annotation methods)  [See Annotation.cs]
+    /// Converts an ITestInformation (BH.oM.Test.CodeCompliance.Error) into a local Annotation.
+    /// Extracts Location.FilePath, Line.Start/End.Line, Line.Start/End.Column,
+    /// Name (check method name), and DocumentationLink via reflection.
     /// </summary>
     public static Annotation ToAnnotationEquivalent(this ITestInformation info)
     {
         var ann = new Annotation();
 
-        // Level & message — identical mapping to BHoMBot:
-        ann.Level = info.Status == TestStatus.Error ? "failure" : "warning";   // [1](https://burohappold-my.sharepoint.com/personal/seun_akanni_burohappold_com/Documents/Microsoft%20Copilot%20Chat%20Files/CodeCompliance.cs)
-        // 'Message' property exists on the concrete info type returned by the engine.
+        ann.Level = info.Status == TestStatus.Error ? "failure" : "warning";
+
         var msgProp = info.GetType().GetProperty("Message");
         ann.Message = msgProp?.GetValue(info)?.ToString() ?? "";
 
-        // Extract the Location property (present on the concrete Error/Info types from engine)
+        // Name = method.Name stored by Check.cs via BHoMObject.Name
+        var nameProp = info.GetType().GetProperty("Name");
+        ann.RuleName = nameProp?.GetValue(info)?.ToString() ?? "";
+
+        // DocumentationLink from MessageAttribute — stored on Error directly
+        var docProp = info.GetType().GetProperty("DocumentationLink");
+        ann.DocumentationLink = docProp?.GetValue(info)?.ToString() ?? "";
+
         var locProp = info.GetType().GetProperty("Location");
         var locObj = locProp?.GetValue(info);
 
         if (locObj != null)
         {
-            // FilePath
             ann.FilePath = locObj.GetType().GetProperty("FilePath")?.GetValue(locObj)?.ToString() ?? "";
 
-            // Line object
             var lineObj = locObj.GetType().GetProperty("Line")?.GetValue(locObj);
             if (lineObj != null)
             {
                 var startObj = lineObj.GetType().GetProperty("Start")?.GetValue(lineObj);
                 var endObj   = lineObj.GetType().GetProperty("End")?.GetValue(lineObj);
 
-                // Start/End line numbers
-                var startLineObj = startObj?.GetType().GetProperty("Line")?.GetValue(startObj);
-                var endLineObj   = endObj?.GetType().GetProperty("Line")?.GetValue(endObj);
-
-                if (startLineObj is int s) ann.LineStart = s;
-                if (endLineObj   is int e) ann.LineEnd = e;
+                if (startObj is { } s)
+                {
+                    if (s.GetType().GetProperty("Line")?.GetValue(s) is int sl)   ann.LineStart   = sl;
+                    if (s.GetType().GetProperty("Column")?.GetValue(s) is int sc) ann.ColumnStart = sc;
+                }
+                if (endObj is { } e)
+                {
+                    if (e.GetType().GetProperty("Line")?.GetValue(e) is int el)   ann.LineEnd   = el;
+                    if (e.GetType().GetProperty("Column")?.GetValue(e) is int ec) ann.ColumnEnd = ec;
+                }
             }
         }
 
@@ -81,7 +86,7 @@ public static class AnnotationConvert
     }
 
     /// <summary>
-    /// Log all available properties from a compliance finding (Status, Message, Location, DocumentationLink, Name, UTCTime, BHoM_Guid, etc.) using reflection.
+    /// Log all available properties from a compliance finding using reflection.
     /// </summary>
     public static void LogDetailedFinding(ITestInformation info)
     {
@@ -90,12 +95,12 @@ public static class AnnotationConvert
 
         Console.WriteLine("  ---");
         Console.WriteLine($"  Status: {info.Status}");
-        SafeLogProperty(t, info, "Message", "Message");
-        SafeLogProperty(t, info, "Location", "Location", value => value != null ? value.GetType().FullName : "");
+        SafeLogProperty(t, info, "Message",           "Message");
+        SafeLogProperty(t, info, "Name",              "RuleName");
         SafeLogProperty(t, info, "DocumentationLink", "DocumentationLink");
-        SafeLogProperty(t, info, "UTCTime", "UTCTime", v => v is DateTime dt ? dt.ToString("dd/MM/yyyy HH:mm:ss") : (v?.ToString() ?? ""));
-        SafeLogProperty(t, info, "BHoM_Guid", "BHoM_Guid");
-        SafeLogProperty(t, info, "Name", "Name");
+        SafeLogProperty(t, info, "Location",          "Location",      v => v?.GetType().FullName ?? "");
+        SafeLogProperty(t, info, "UTCTime",           "UTCTime",       v => v is DateTime dt ? dt.ToString("dd/MM/yyyy HH:mm:ss") : (v?.ToString() ?? ""));
+        SafeLogProperty(t, info, "BHoM_Guid",         "BHoM_Guid");
 
         // Location details (nested object)
         var locProp = t.GetProperty("Location");
@@ -105,33 +110,35 @@ public static class AnnotationConvert
             var locT = loc.GetType();
             Console.WriteLine("  Location details:");
             SafeLogProperty(locT, loc, "FilePath", "    FilePath");
-            var lineProp = locT.GetProperty("Line");
-            var lineObj = lineProp?.GetValue(loc);
+            var lineObj = locT.GetProperty("Line")?.GetValue(loc);
             if (lineObj != null)
             {
-                var lineT = lineObj.GetType();
-                var start = lineT.GetProperty("Start")?.GetValue(lineObj);
-                var end = lineT.GetProperty("End")?.GetValue(lineObj);
-                var startLine = start?.GetType().GetProperty("Line")?.GetValue(start);
-                var endLine = end?.GetType().GetProperty("Line")?.GetValue(end);
-                Console.WriteLine($"    StartLine: {startLine ?? ""}");
-                Console.WriteLine($"    EndLine: {endLine ?? ""}");
+                var lineT  = lineObj.GetType();
+                var start  = lineT.GetProperty("Start")?.GetValue(lineObj);
+                var end    = lineT.GetProperty("End")?.GetValue(lineObj);
+                var startLine   = start?.GetType().GetProperty("Line")?.GetValue(start);
+                var startColumn = start?.GetType().GetProperty("Column")?.GetValue(start);
+                var endLine     = end?.GetType().GetProperty("Line")?.GetValue(end);
+                var endColumn   = end?.GetType().GetProperty("Column")?.GetValue(end);
+                Console.WriteLine($"    Start: line {startLine ?? ""}, col {startColumn ?? ""}");
+                Console.WriteLine($"    End:   line {endLine   ?? ""}, col {endColumn   ?? ""}");
             }
         }
 
-        SafeLogProperty(t, info, "Fragments", "Fragments", v => v != null ? v.GetType().FullName : "");
-        SafeLogProperty(t, info, "Tags", "Tags", v => v != null ? v.GetType().FullName : "");
-        SafeLogProperty(t, info, "CustomData", "CustomData", v => v != null ? v.GetType().FullName : "");
+        SafeLogProperty(t, info, "Fragments",   "Fragments",   v => v?.GetType().FullName ?? "");
+        SafeLogProperty(t, info, "Tags",        "Tags",        v => v?.GetType().FullName ?? "");
+        SafeLogProperty(t, info, "CustomData",  "CustomData",  v => v?.GetType().FullName ?? "");
     }
 
-    static void SafeLogProperty(Type type, object instance, string propName, string label, Func<object, string> format = null)
+    // Nullable format delegate so callers can omit it.
+    static void SafeLogProperty(Type type, object instance, string propName, string label, Func<object?, string>? format = null)
     {
         var prop = type.GetProperty(propName);
         if (prop == null) return;
         try
         {
             var value = prop.GetValue(instance);
-            string text = format != null ? format(value) : (value?.ToString() ?? "");
+            string text = format != null ? (format(value) ?? "") : (value?.ToString() ?? "");
             if (!string.IsNullOrEmpty(text) || value != null)
                 Console.WriteLine($"  {label}: {text}");
         }
@@ -146,31 +153,31 @@ static class CheckMetadata
     {
         title = checkType?.ToLowerInvariant() switch
         {
-            "code" => "Check Code Compliance",
-            "copyright" => "Check Copyright Compliance",
+            "code"          => "Check Code Compliance",
+            "copyright"     => "Check Copyright Compliance",
             "documentation" => "Check Documentation Compliance",
-            _ => "Check Compliance"
+            _               => "Check Compliance"
         };
         if (status == TestStatus.Error)
         {
             summary = checkType?.ToLowerInvariant() switch
             {
-                "code" => "This check has failed due to compliance errors",
-                "copyright" => "This check has failed due to copyright errors",
+                "code"          => "This check has failed due to compliance errors",
+                "copyright"     => "This check has failed due to copyright errors",
                 "documentation" => "This check has failed due to documentation errors",
-                _ => "This check has failed due to compliance errors"
+                _               => "This check has failed due to compliance errors"
             };
             text = "There were some compliance issues with the files changed in this Pull Request";
         }
         else if (status == TestStatus.Warning)
         {
             summary = "This check has some warnings";
-            text = "There were some warnings found with the code changed in this Pull Request";
+            text    = "There were some warnings found with the code changed in this Pull Request";
         }
         else
         {
             summary = "";
-            text = "";
+            text    = "";
         }
     }
 }
@@ -180,7 +187,6 @@ class Program
     static int Main(string[] args)
     {
         // CLI: compliance-runner [--output console|github|json|sarif] [--sarif-file path] <code|copyright|documentation> <file1.cs> [file2.cs ...]
-        // For GitHub Actions: use --output github (annotations in log/PR) or --output sarif and --sarif-file for code scanning upload.
         var (outputFormat, sarifFilePath, checkType, files) = ParseArgs(args);
         if (checkType == null || files == null || files.Count == 0)
         {
@@ -198,7 +204,6 @@ class Program
         if (outputFormat == "console")
             Console.WriteLine($"Running BHoM {checkType.ToUpper()} compliance...");
 
-        // Run the engine per file (this is exactly what the bot did per changed file) [1](https://burohappold-my.sharepoint.com/personal/seun_akanni_burohappold_com/Documents/Microsoft%20Copilot%20Chat%20Files/CodeCompliance.cs)
         TestResult mergedResult = new TestResult() { Status = TestStatus.Pass, Information = new List<ITestInformation>() };
         var allAnnotations = new List<Annotation>();
 
@@ -213,23 +218,24 @@ class Program
                 continue;
             }
 
-            // Engine call — same as BHoMBot’s RunChecks(file, "<type>") [1](https://burohappold-my.sharepoint.com/personal/seun_akanni_burohappold_com/Documents/Microsoft%20Copilot%20Chat%20Files/CodeCompliance.cs)[2](https://burohappold-my.sharepoint.com/personal/seun_akanni_burohappold_com/Documents/Microsoft%20Copilot%20Chat%20Files/Annotation.cs)
             TestResult resultForThisFile = BH.Engine.Test.CodeCompliance.Compute.RunChecks(file, checkType);
             if (verbose) Console.WriteLine($"  Result Status: {resultForThisFile.Status}");
 
             mergedResult = mergedResult.Merge(resultForThisFile);
 
-            var information = resultForThisFile.Information ?? Enumerable.Empty<ITestInformation>();
+            var information     = resultForThisFile.Information ?? Enumerable.Empty<ITestInformation>();
             var perFileAnnotations = information.Select(info => info.ToAnnotationEquivalent()).ToList();
+            var infoList        = information.ToList();
 
-            var infoList = information.ToList();
             for (int i = 0; i < perFileAnnotations.Count; i++)
             {
-                var a = perFileAnnotations[i];
+                var a           = perFileAnnotations[i];
                 var displayPath = string.IsNullOrEmpty(a.FilePath) ? file : a.FilePath;
                 if (verbose)
                 {
-                    Console.WriteLine($"  - [{a.Level}] {displayPath}:{a.LineStart}-{a.LineEnd} :: {a.Message}");
+                    Console.WriteLine($"  - [{a.Level}] {displayPath}:{a.LineStart}:{a.ColumnStart}-{a.LineEnd}:{a.ColumnEnd} [{a.RuleName}] :: {a.Message}");
+                    if (!string.IsNullOrEmpty(a.DocumentationLink))
+                        Console.WriteLine($"    Docs: {a.DocumentationLink}");
                     if (i < infoList.Count)
                         AnnotationConvert.LogDetailedFinding(infoList[i]);
                 }
@@ -256,29 +262,35 @@ class Program
         {
             foreach (var a in allAnnotations)
             {
-                var path = string.IsNullOrEmpty(a.FilePath) ? "unknown" : a.FilePath.Replace("\\", "/");
+                var path  = string.IsNullOrEmpty(a.FilePath) ? "unknown" : a.FilePath.Replace("\\", "/");
                 var level = a.Level == "failure" ? "error" : "warning";
-                var msg = (a.Message ?? "").Replace("\r", "").Replace("\n", " ");
-                Console.WriteLine($"::{level} file={path},line={a.LineStart}::{msg}");
+                var msg   = (a.Message ?? "").Replace("\r", "").Replace("\n", " ");
+                // Include column when available so GitHub pinpoints the exact symbol
+                var col   = a.ColumnStart > 0 ? $",col={a.ColumnStart}" : "";
+                Console.WriteLine($"::{level} file={path},line={a.LineStart}{col}::{msg}");
             }
         }
         else if (outputFormat == "json")
         {
             var payload = new Dictionary<string, object>
             {
-                ["status"] = mergedResult.Status.ToString(),
-                ["checkType"] = checkType,
-                ["title"] = title,
-                ["summary"] = summary,
-                ["text"] = text,
+                ["status"]          = mergedResult.Status.ToString(),
+                ["checkType"]       = checkType,
+                ["title"]           = title,
+                ["summary"]         = summary,
+                ["text"]            = text,
                 ["annotationCount"] = allAnnotations.Count,
-                ["annotations"] = allAnnotations.Select(a => new Dictionary<string, object>
+                ["annotations"]     = allAnnotations.Select(a => new Dictionary<string, object>
                 {
-                    ["path"] = a.FilePath,
-                    ["lineStart"] = a.LineStart,
-                    ["lineEnd"] = a.LineEnd,
-                    ["level"] = a.Level,
-                    ["message"] = a.Message
+                    ["path"]              = a.FilePath,
+                    ["lineStart"]         = a.LineStart,
+                    ["lineEnd"]           = a.LineEnd,
+                    ["columnStart"]       = a.ColumnStart,
+                    ["columnEnd"]         = a.ColumnEnd,
+                    ["level"]             = a.Level,
+                    ["message"]           = a.Message,
+                    ["ruleName"]          = a.RuleName,
+                    ["documentationLink"] = a.DocumentationLink
                 }).ToList()
             };
             Console.WriteLine(JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = false }));
@@ -295,15 +307,14 @@ class Program
                 Console.WriteLine(sarif);
         }
 
-        // Exit code — mirrors bot’s “failure” conclusion on Error status
-        // Exit code: failure only on Error (legacy Conclusion.Failure); Warning and Pass are success
         return mergedResult.Status == TestStatus.Error ? 1 : 0;
     }
 
-    static (string outputFormat, string sarifFilePath, string checkType, List<string> files) ParseArgs(string[] args)
+    // Nullable tuple members: sarifFilePath, checkType and files are null on bad input.
+    static (string outputFormat, string? sarifFilePath, string? checkType, List<string>? files) ParseArgs(string[] args)
     {
-        string outputFormat = "console";
-        string sarifFilePath = null;
+        string outputFormat   = "console";
+        string? sarifFilePath = null;
         var rest = new List<string>();
         for (int i = 0; i < args.Length; i++)
         {
@@ -330,36 +341,72 @@ class Program
 
     static string BuildSarif(string checkType, string title, List<Annotation> annotations)
     {
+        // Build a rules array from distinct rule names so each check method appears
+        // as its own rule in Code Scanning with its own documentation link.
+        var ruleMap = annotations
+            .Where(a => !string.IsNullOrEmpty(a.RuleName))
+            .GroupBy(a => a.RuleName)
+            .ToDictionary(
+                g => g.Key,
+                g => g.First().DocumentationLink);
+
+        // Fall back to a single generic rule when rule names are unavailable.
+        if (ruleMap.Count == 0)
+            ruleMap[$"BHoM.{checkType}"] = "";
+
+        var rulesArray = ruleMap.Select(kv =>
+        {
+            var rule = new Dictionary<string, object>
+            {
+                ["id"]               = kv.Key,
+                ["shortDescription"] = new Dictionary<string, object> { ["text"] = title }
+            };
+            if (!string.IsNullOrEmpty(kv.Value))
+                rule["helpUri"] = kv.Value;
+            return (object)rule;
+        }).ToArray();
+
         var results = new List<object>();
         foreach (var a in annotations)
         {
+            var ruleId = string.IsNullOrEmpty(a.RuleName) ? $"BHoM.{checkType}" : a.RuleName;
+
+            var region = new Dictionary<string, object>
+            {
+                ["startLine"] = a.LineStart > 0 ? a.LineStart : 1,
+                ["endLine"]   = a.LineEnd   > 0 ? a.LineEnd   : 1
+            };
+            if (a.ColumnStart > 0) region["startColumn"] = a.ColumnStart;
+            if (a.ColumnEnd   > 0) region["endColumn"]   = a.ColumnEnd;
+
             results.Add(new Dictionary<string, object>
             {
-                ["ruleId"] = $"BHoM.{checkType}",
-                ["level"] = a.Level == "failure" ? "error" : "warning",
-                ["message"] = new Dictionary<string, object> { ["text"] = a.Message ?? "" },
+                ["ruleId"]    = ruleId,
+                ["level"]     = a.Level == "failure" ? "error" : "warning",
+                ["message"]   = new Dictionary<string, object> { ["text"] = a.Message ?? "" },
                 ["locations"] = new[]
                 {
                     new Dictionary<string, object>
                     {
                         ["physicalLocation"] = new Dictionary<string, object>
                         {
-                            ["artifactLocation"] = new Dictionary<string, object> { ["uri"] = a.FilePath ?? "" },
-                            ["region"] = new Dictionary<string, object>
+                            ["artifactLocation"] = new Dictionary<string, object>
                             {
-                                ["startLine"] = a.LineStart > 0 ? a.LineStart : 1,
-                                ["endLine"] = a.LineEnd > 0 ? a.LineEnd : 1
-                            }
+                                ["uri"]       = (a.FilePath ?? "").Replace("\\", "/"),
+                                ["uriBaseId"] = "%SRCROOT%"
+                            },
+                            ["region"] = region
                         }
                     }
                 }
             });
         }
+
         var sarif = new Dictionary<string, object>
         {
             ["$schema"] = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
             ["version"] = "2.1.0",
-            ["runs"] = new[]
+            ["runs"]    = new[]
             {
                 new Dictionary<string, object>
                 {
@@ -367,9 +414,9 @@ class Program
                     {
                         ["driver"] = new Dictionary<string, object>
                         {
-                            ["name"] = "BHoM Compliance Runner",
+                            ["name"]           = "BHoM Compliance Runner",
                             ["informationUri"] = "https://github.com/BHoM/BHoM",
-                            ["rules"] = new[] { new Dictionary<string, object> { ["id"] = $"BHoM.{checkType}", ["shortDescription"] = new Dictionary<string, object> { ["text"] = title } } }
+                            ["rules"]          = rulesArray
                         }
                     },
                     ["results"] = results
