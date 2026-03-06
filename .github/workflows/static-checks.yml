@@ -3,6 +3,16 @@ name: Static Checks
 on:
   workflow_call:
     inputs:
+      run_format:
+        type: boolean
+        required: false
+        default: true
+        # Set to false to skip the .NET format check entirely for this repo.
+      run_compliance:
+        type: boolean
+        required: false
+        default: true
+        # Set to false to skip all compliance checks entirely for this repo.
       dotnet_version:
         type: string
         required: false
@@ -17,7 +27,8 @@ on:
         default: "code copyright documentation"
         # Space-separated list of compliance checks to run.
         # Valid values: code, copyright, documentation
-        # Example — skip copyright for non-BHoM orgs: "code documentation"
+        # Example — skip copyright checks: "code documentation"
+        # Example — code compliance only: "code"
     secrets:
       GH_TOKEN:
         required: false   # PAT for cloning private dependency repositories; falls back to github.token
@@ -26,6 +37,7 @@ jobs:
 
   # ── Format check ─────────────────────────────────────────────────────────
   format:
+    if: inputs.run_format
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -107,6 +119,7 @@ jobs:
 
   # ── Compliance check ──────────────────────────────────────────────────────
   compliance:
+    if: inputs.run_compliance
     runs-on: windows-latest
     permissions:
       contents: read
