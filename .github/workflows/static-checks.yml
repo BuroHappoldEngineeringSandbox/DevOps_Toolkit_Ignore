@@ -17,12 +17,12 @@ on:
 
 jobs:
   format:
-    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/checks/format/format.yml@main
+    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/format.yml@main
     with:
       dotnet_version: ${{ inputs.dotnet_version }}
 
   compliance:
-    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/checks/compliance/compliance.yml@main
+    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/compliance.yml@main
     with:
       compliance_checks: ${{ inputs.compliance_checks }}
     secrets: inherit

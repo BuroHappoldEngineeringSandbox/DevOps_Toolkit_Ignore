@@ -79,7 +79,7 @@ jobs:
       - name: Compute changed C# files
         id: changed
         run: |
-          & "_toolkit\.github\workflows\checks\compliance\scripts\Get-ChangedFiles.ps1" `
+          & "_toolkit\.github\workflows\scripts\compliance\Get-ChangedFiles.ps1" `
               -EventName "${{ github.event_name }}" `
               -BaseRef   "${{ github.base_ref }}"
 
@@ -88,7 +88,7 @@ jobs:
         id: run_checks
         if: steps.changed.outputs.count != '0'
         run: |
-          & "_toolkit\.github\workflows\checks\compliance\scripts\Run-Compliance.ps1" `
+          & "_toolkit\.github\workflows\scripts\compliance\Run-Compliance.ps1" `
               -Runner           "out\runner\ComplianceRunner.exe" `
               -ChangedFilesPath "changed_files.txt" `
               -Checks           "${{ inputs.compliance_checks }}"
