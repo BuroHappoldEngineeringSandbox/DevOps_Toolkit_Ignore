@@ -114,7 +114,10 @@ jobs:
             exit 1
           }
 
-          $fileList = Get-Content changed_files.txt | ForEach-Object { $_ -replace '/', '\' }
+          # @() forces a [string[]] even when only one file changed.
+          # Without it, a scalar string splats as a char[] and each character
+          # becomes a separate argument to the runner.
+          $fileList = @(Get-Content changed_files.txt | ForEach-Object { $_ -replace '/', '\' })
           $checks   = "${{ inputs.compliance_checks }}".Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries)
 
           Write-Host "::notice title=Compliance checks::Running: $($checks -join ', ')"
