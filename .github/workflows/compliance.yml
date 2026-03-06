@@ -1,11 +1,23 @@
-name: BHoM Compliance (PR)
+name: BHoM Compliance
 
 on:
   workflow_call:
     inputs:
-      dotnet_version:   { type: string, default: "10.x" }
-      configuration:    { type: string, default: "Release" }
-      token:            { type: string, default: "" }  # only if private deps
+      dotnet_version:
+        type: string
+        default: "10.x"
+      configuration:
+        type: string
+        default: "Release"
+      compliance_checks:
+        type: string
+        default: "code copyright documentation"
+        # Space-separated list of checks to run.
+        # Valid values: code, copyright, documentation
+        # Example — skip copyright for non-BHoM orgs: "code documentation"
+    secrets:
+      GH_TOKEN:
+        required: false   # PAT for cloning private dependency repositories; falls back to github.token
 
 jobs:
   compliance:
@@ -19,56 +31,51 @@ jobs:
         shell: pwsh
 
     steps:
-      - name: Checkout caller (full history for diffs)
+      # ── 1. Checkout caller with full history (needed for git diff on PRs) ──────
+      - name: Checkout caller repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ inputs.dotnet_version }}
-
-      # ------------------------------------------------------------
-      # Build ONLY Test_Toolkit + its own dependency graph
-      # ------------------------------------------------------------
-      - name: Resolve Dependencies (Compliance / seeds-only)
+      # ── 2. Resolve and build Test_Toolkit + its transitive dependencies ────────
+      #       Uses mode=seeds so only Test_Toolkit's graph is built — not the
+      #       calling repo's own dependencies (compliance does not need those).
+      - name: Resolve dependencies (Test_Toolkit graph)
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
         with:
-          mode: seeds
-          seeds: |
-            BHoM/Test_Toolkit
+          mode:           seeds
+          seeds:          BHoM/Test_Toolkit
           dotnet_version: ${{ inputs.dotnet_version }}
           configuration:  ${{ inputs.configuration }}
-          token:          ${{ inputs.token }}
+          token:          ${{ secrets.GH_TOKEN }}
 
+      # ── 3. Stage built assemblies to C:\ProgramData\BHoM\Assemblies ───────────
+      #       On a cache hit the DLLs are in deps-assemblies/ but not yet in
+      #       ProgramData; this step restores them so ComplianceRunner can compile.
       - name: Stage assemblies to ProgramData\BHoM\Assemblies
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
         with:
-          source: "deps-assemblies"
+          source: deps-assemblies
 
-      # --- Build the runner from DevOps_Toolkit standard location ---
+      # ── 4. Check out DevOps_Toolkit to publish the ComplianceRunner ───────────
       - name: Checkout DevOps_Toolkit (runner source)
         uses: actions/checkout@v4
         with:
           repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
           ref: main
-          path: toolkit_repo
+          path: _toolkit
 
-      - name: Publish Compliance Runner
+      # ── 5. Publish ComplianceRunner (HintPath DLLs now present in ProgramData) ─
+      - name: Publish ComplianceRunner
         run: |
-          $proj = "toolkit_repo\src\Carbon\ComplianceRunner\Carbon.ComplianceRunner.csproj"
+          $proj = "_toolkit\src\Compliance\ComplianceRunner\ComplianceRunner.csproj"
           if (-not (Test-Path $proj)) {
-            # Fallback to previous path if needed
-            $proj = "toolkit_repo\src\Compliance\ComplianceRunner\ComplianceRunner.csproj"
-          }
-          if (-not (Test-Path $proj)) {
-            Write-Error "Compliance Runner project not found. Checked: `n - toolkit_repo\src\Carbon\ComplianceRunner\Carbon.ComplianceRunner.csproj `n - toolkit_repo\src\Compliance\ComplianceRunner\ComplianceRunner.csproj"
+            Write-Error "ComplianceRunner project not found at: $proj"
             exit 1
           }
           dotnet publish $proj -c ${{ inputs.configuration }} -o out\runner
 
-      # --- Determine PR-changed *.cs files only ---
+      # ── 6. Determine which C# files changed in this PR ───────────────────────
       - name: Compute changed C# files
         id: changed
         run: |
@@ -78,8 +85,9 @@ jobs:
           }
 
           git fetch origin ${{ github.base_ref }}
-          $files = git diff --name-only --diff-filter=ACMRT origin/${{ github.base_ref }}...HEAD |
-            Where-Object { $_.ToLower().EndsWith(".cs") }
+          $files = git diff --name-only --diff-filter=ACMRT `
+                    "origin/${{ github.base_ref }}...HEAD" |
+                  Where-Object { $_.ToLower().EndsWith(".cs") }
 
           $count = ($files | Measure-Object).Count
           $files -join "`n" | Out-File changed_files.txt -Encoding utf8
@@ -87,41 +95,76 @@ jobs:
           "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
           if ($count -gt 0) {
-            Write-Host "Changed C# files:"
+            Write-Host "Changed C# files ($count):"
             Get-Content changed_files.txt
           } else {
             Write-Host "No changed C# files detected."
           }
 
-      # --- Run compliance on the delta; still upload SARIF if violations occur ---
-      - name: Run Compliance Runner (PR delta)
+      # ── 7. Run each requested compliance check in its own log group ──────────
+      - name: Run compliance checks
+        id: run_checks
         if: steps.changed.outputs.count != '0'
         run: |
-          $sarif  = "compliance.sarif"
           $runner = "out\runner\ComplianceRunner.exe"
           if (-not (Test-Path $runner)) {
             Write-Host "Publish contents:"
             Get-ChildItem -Recurse out\runner | Select-Object FullName
-            Write-Error "Runner exe not found at $runner"
+            Write-Error "Runner executable not found at: $runner"
             exit 1
           }
 
-          New-Item -ItemType Directory -Force -Path scan | Out-Null
-          Get-Content changed_files.txt | ForEach-Object {
-            $src = $_
-            $dst = Join-Path "scan" $_
-            New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
-            Copy-Item $src $dst -Force
+          $fileList = Get-Content changed_files.txt | ForEach-Object { $_ -replace '/', '\' }
+          $checks   = "${{ inputs.compliance_checks }}".Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries)
+
+          Write-Host "::notice title=Compliance checks::Running: $($checks -join ', ')"
+
+          $anyFailure    = 0
+          $sarifGenerated = "false"
+          $checkResults  = [System.Collections.Generic.List[hashtable]]::new()
+
+          foreach ($check in $checks) {
+            Write-Host "::group::BHoM $check compliance"
+            & $runner $check --output github @fileList
+            $ok = ($LASTEXITCODE -eq 0)
+            if (-not $ok) { $anyFailure = 1 }
+            Write-Host "::endgroup::"
+
+            $checkResults.Add(@{ Check=$check; Ok=$ok })
           }
 
-          & $runner "scan" --sarif $sarif
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "Compliance violations detected (non-zero exit)."
+          # SARIF is only meaningful for the 'code' check (Roslyn diagnostics).
+          if ($checks -contains "code") {
+            Write-Host "::group::SARIF export (code)"
+            & $runner code --output sarif --sarif-file compliance.sarif @fileList
+            if ($LASTEXITCODE -eq 0) { $sarifGenerated = "true" }
+            Write-Host "::endgroup::"
           }
 
-      - name: Upload SARIF (Code scanning)
-        if: steps.changed.outputs.count != '0'
+          "sarif_generated=$sarifGenerated" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          # Step summary: per-check result table
+          if ($env:GITHUB_STEP_SUMMARY) {
+            $mdLines = @("### Compliance check results", "",
+                         "| Check | Result |",
+                         "|---|---|")
+            foreach ($r in $checkResults) {
+              $icon   = if ($r.Ok) { ":white_check_mark:" } else { ":x:" }
+              $status = if ($r.Ok) { "Passed" } else { "**Failed**" }
+              $mdLines += "| $($r.Check) | $icon $status |"
+            }
+            $mdLines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          }
+
+          if ($anyFailure -ne 0) {
+            Write-Host "::error::One or more compliance checks failed."
+            exit 1
+          }
+
+      # ── 8. Upload SARIF results to GitHub Code Scanning ──────────────────────
+      - name: Upload SARIF
+        if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && always()
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: compliance.sarif
-          category: "bhom-compliance-pr-delta"
+          category:   bhom-compliance-pr-delta

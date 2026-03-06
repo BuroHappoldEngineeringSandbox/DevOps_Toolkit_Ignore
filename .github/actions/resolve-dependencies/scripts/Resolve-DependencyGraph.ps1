@@ -59,7 +59,7 @@ $Prefer   = $env:PR_BRANCH
 if ([string]::IsNullOrWhiteSpace($Prefer)) { $Prefer = "feature/unknown" }
 
 $Fallback = $env:BASE_BRANCH
-if ([string]::IsNullOrWhiteSpace($Fallback)) { $Fallback = "main" }
+if ([string]::IsNullOrWhiteSpace($Fallback)) { $Fallback = "develop" }
 
 # ------------------------------------------------------------
 # Tracking and maps
@@ -124,6 +124,8 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
 
         git remote set-url origin "https://github.com/$ownerRepo.git" | Out-Null
         Pop-Location
+
+        Write-Host "::notice title=Dependency checkout::$ownerRepo → $selectedRef @ $($sha.Substring(0,7))"
     }
 
     $nameMap[$ownerRepo] = $name
@@ -240,17 +242,29 @@ $folderOrder = $merged | ForEach-Object {
 $folderOrder | Set-Content -Path $orderOut -Encoding utf8
 
 Write-Host "== Final build order =="
-Get-Content $orderOut | ForEach-Object { Write-Host " - $_" }
+Get-Content $orderOut | ForEach-Object { Write-Host "  $_" }
 
 # ------------------------------------------------------------
-# Print selection summary
+# Step summary: dependency checkout table
 # ------------------------------------------------------------
 if (Test-Path $selectFile) {
+    Write-Host ""
     Write-Host "== Checkout selections =="
+
+    $mdLines = @("### Dependency graph — checkout selections", "",
+                 "| Repository | Folder | Branch | SHA |",
+                 "|---|---|---|---|")
+
     foreach ($line in (Get-Content $selectFile)) {
         $t = $line.Split("|")
         if ($t.Length -ge 4) {
-            Write-Host " - $($t[0]) (folder: $($t[1])) -> $($t[2]) @ $($t[3])"
+            $shortSha = if ($t[3].Length -ge 7) { $t[3].Substring(0,7) } else { $t[3] }
+            Write-Host "  $($t[0]) → $($t[2]) @ $shortSha"
+            $mdLines += "| ``$($t[0])`` | $($t[1]) | $($t[2]) | ``$shortSha`` |"
         }
+    }
+
+    if ($env:GITHUB_STEP_SUMMARY) {
+        $mdLines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
     }
 }

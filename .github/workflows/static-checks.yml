@@ -6,6 +6,13 @@ on:
       dotnet-version:
         type: string
         required: false
+      compliance_checks:
+        type: string
+        required: false
+        default: "code copyright documentation"
+        # Space-separated list of compliance checks to run.
+        # Valid values: code, copyright, documentation
+        # Example — skip copyright for non-BHoM orgs: "code documentation"
 
 jobs:
   format:
@@ -20,10 +27,8 @@ jobs:
           with:
             dotnet-version: ${{ inputs.dotnet-version || '8.x' }}
 
-  # compliance: 
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-
-  #     - name: Run Compliance Checks
-  #       uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/compliance@main
+  compliance:
+    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/compliance.yml@main
+    with:
+      compliance_checks: ${{ inputs.compliance_checks }}
+    secrets: inherit

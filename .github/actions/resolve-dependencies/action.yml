@@ -56,6 +56,12 @@ runs:
         nuget-version: "6.x"
 
     # ------------------------------------------------------------
+    # MSBuild (needed for legacy .NET Framework projects)
+    # ------------------------------------------------------------
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    # ------------------------------------------------------------
     # Cache NuGet packages + MSBuild graph cache
     # ------------------------------------------------------------
     - name: Cache NuGet packages
@@ -87,6 +93,10 @@ runs:
       run: |
         New-Item -ItemType Directory -Force -Path deps | Out-Null
         New-Item -ItemType Directory -Force -Path deps-assemblies | Out-Null
+
+        # Required by BHoM legacy projects: PostBuildEvent xcopy targets this directory.
+        # Must exist before any msbuild invocation so xcopy does not fail.
+        New-Item -ItemType Directory -Force -Path "$env:ProgramData\BHoM\Assemblies" | Out-Null
 
         New-Item -ItemType File -Force -Path deps/_shas.txt | Out-Null
         if (Test-Path deps/_order.txt)     { Remove-Item deps/_order.txt -Force }

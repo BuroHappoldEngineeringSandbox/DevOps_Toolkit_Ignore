@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 $depsDir  = "deps"
 $orderOut = Join-Path $depsDir "_order.txt"
 $overallFailures = @()
+$buildResults    = [System.Collections.Generic.List[hashtable]]::new()
 
 if (-not (Test-Path $orderOut)) {
     Write-Warning "No build order file found; falling back to directory enumeration."
@@ -22,23 +23,33 @@ foreach ($repoName in $order) {
     $repoPath = Join-Path $depsDir $repoName
     if (-not (Test-Path $repoPath)) { continue }
 
-    Write-Host "::group::Building $repoName::"
+    Write-Host "::group::Building $repoName"
 
-    $solution = Get-ChildItem $repoPath -Recurse -Filter *.sln -ErrorAction SilentlyContinue | Select-Object -First 1
+    $solution           = Get-ChildItem $repoPath -Recurse -Filter *.sln -ErrorAction SilentlyContinue | Select-Object -First 1
     $usesPackagesConfig = (Get-ChildItem $repoPath -Recurse -Filter packages.config -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
+    $buildType          = if ($usesPackagesConfig) { "MSBuild (legacy)" } else { "dotnet build (SDK)" }
+    $buildOk            = $true
 
     try {
 
         if ($null -ne $solution) {
 
             if ($usesPackagesConfig) {
+                Write-Host "Detected legacy project (packages.config) — using NuGet restore + MSBuild"
                 nuget restore $solution.FullName -NonInteractive
+                if ($LASTEXITCODE -ne 0) { throw "NuGet restore failed for $repoName" }
+
+                msbuild $solution.FullName `
+                    /m /p:Configuration=$Configuration `
+                    /p:Platform="Any CPU" `
+                    /verbosity:minimal /nologo
+                if ($LASTEXITCODE -ne 0) { throw "MSBuild failed for $repoName" }
             }
             else {
                 dotnet restore $solution.FullName
+                dotnet build $solution.FullName -c $Configuration --no-restore --nologo -m
+                if ($LASTEXITCODE -ne 0) { throw "dotnet build failed for $repoName" }
             }
-
-            dotnet build $solution.FullName -c $Configuration --no-restore --nologo -m
         }
         else {
 
@@ -46,27 +57,42 @@ foreach ($repoName in $order) {
 
             if ($projects.Count -eq 0) {
                 Write-Host "No .sln or .csproj in $repoName — skipping."
+                $buildType = "skipped"
             }
             else {
 
                 foreach ($p in $projects) {
 
                     if ($usesPackagesConfig) {
+                        Write-Host "Detected legacy project (packages.config) — using NuGet restore + MSBuild"
                         nuget restore $repoPath -NonInteractive
+                        if ($LASTEXITCODE -ne 0) { throw "NuGet restore failed for $($p.Name)" }
+
+                        msbuild $p.FullName `
+                            /m /p:Configuration=$Configuration `
+                            /p:Platform="Any CPU" `
+                            /verbosity:minimal /nologo
+                        if ($LASTEXITCODE -ne 0) { throw "MSBuild failed for $($p.Name)" }
                     }
                     else {
                         dotnet restore $p.FullName
+                        dotnet build $p.FullName -c $Configuration --no-restore --nologo -m
+                        if ($LASTEXITCODE -ne 0) { throw "dotnet build failed for $($p.Name)" }
                     }
-
-                    dotnet build $p.FullName -c $Configuration --no-restore --nologo -m
                 }
             }
         }
+
+        Write-Host "::notice title=Build OK::$repoName built successfully ($buildType)"
     }
     catch {
+        $buildOk = $false
         Write-Warning "Build FAILED for '$repoName': $($_.Exception.Message)"
+        Write-Host "::error title=Build FAILED::$repoName — $($_.Exception.Message)"
         $overallFailures += "$repoName"
     }
+
+    $buildResults.Add(@{ Repo=$repoName; Type=$buildType; Ok=$buildOk })
 
     Write-Host "::endgroup::"
 }
@@ -75,17 +101,50 @@ if (-not (Test-Path "deps-assemblies")) {
     New-Item -ItemType Directory -Force -Path "deps-assemblies" | Out-Null
 }
 
+# Collect DLLs staged by post-build xcopy events (legacy BHoM projects copy to this directory).
+# This is the primary collection source — it works for both cache-miss builds and is the
+# canonical place BHoM's PostBuildEvent xcopy targets.
+$bhomAssemblies = Join-Path $env:ProgramData "BHoM\Assemblies"
+if (Test-Path $bhomAssemblies) {
+    $staged = Get-ChildItem $bhomAssemblies -Filter *.dll -ErrorAction SilentlyContinue
+    $staged | ForEach-Object { Copy-Item $_.FullName "deps-assemblies" -Force }
+    Write-Host "Collected $($staged.Count) assemblies from $bhomAssemblies"
+}
+
+# Also collect from standard SDK output paths for any SDK-style projects that do not use xcopy.
 Get-ChildItem "deps" -Recurse -Filter *.dll -ErrorAction SilentlyContinue |
     Where-Object { $_.FullName -match "\\bin\\$Configuration\\" } |
     ForEach-Object { Copy-Item $_.FullName "deps-assemblies" -Force }
+
+$totalAssemblies = (Get-ChildItem "deps-assemblies" -Filter *.dll -ErrorAction SilentlyContinue | Measure-Object).Count
+Write-Host "Total assemblies in deps-assemblies: $totalAssemblies"
 
 Write-Host "Collected assemblies (sample):"
 Get-ChildItem "deps-assemblies" -Filter *.dll -ErrorAction SilentlyContinue |
     Sort-Object Name |
     Select-Object -First 60 |
-    ForEach-Object { $_.Name }
+    ForEach-Object { "  $($_.Name)" }
 
-# To enforce CI failure on dependency build errors, uncomment:
-# if ($overallFailures.Count -gt 0) {
-#     Write-Error ("One or more dependency builds failed:`n - " + ($overallFailures -join "`n - "))
-# }
+# ------------------------------------------------------------
+# Step summary: dependency build results table
+# ------------------------------------------------------------
+if ($env:GITHUB_STEP_SUMMARY) {
+    $mdLines = @("### Dependency build results", "",
+                 "| Repository | Build tool | Result |",
+                 "|---|---|---|")
+
+    foreach ($r in $buildResults) {
+        $icon   = if ($r.Ok) { ":white_check_mark:" } else { ":x:" }
+        $status = if ($r.Ok) { "Success" } else { "**FAILED**" }
+        $mdLines += "| ``$($r.Repo)`` | $($r.Type) | $icon $status |"
+    }
+
+    $mdLines += ""
+    $mdLines += "_Total assemblies staged: **$totalAssemblies**_"
+
+    $mdLines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+}
+
+if ($overallFailures.Count -gt 0) {
+    Write-Error ("One or more dependency builds failed:`n - " + ($overallFailures -join "`n - "))
+}
