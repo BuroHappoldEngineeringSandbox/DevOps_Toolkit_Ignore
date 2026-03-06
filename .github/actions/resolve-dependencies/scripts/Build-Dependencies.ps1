@@ -5,8 +5,40 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$depsDir  = "deps"
-$orderOut = Join-Path $depsDir "_order.txt"
+# ------------------------------------------------------------
+# Runs the appropriate build tool for a given target path.
+# Uses MSBuild for legacy projects (packages.config detected),
+# dotnet build for SDK-style projects.
+# ------------------------------------------------------------
+function Invoke-BHoMBuild {
+    param(
+        [Parameter(Mandatory)][string]$Target,
+        [Parameter(Mandatory)][bool]  $IsLegacy,
+        [Parameter(Mandatory)][string]$Config
+    )
+
+    if ($IsLegacy) {
+        Write-Host "Detected legacy project (packages.config) — using NuGet restore + MSBuild"
+        nuget restore $Target -NonInteractive
+        if ($LASTEXITCODE -ne 0) { throw "NuGet restore failed for $Target" }
+
+        msbuild $Target `
+            /m /p:Configuration=$Config `
+            /p:Platform="Any CPU" `
+            /verbosity:minimal /nologo
+        if ($LASTEXITCODE -ne 0) { throw "MSBuild failed for $Target" }
+    }
+    else {
+        dotnet restore $Target
+        dotnet build $Target -c $Config --no-restore --nologo -m
+        if ($LASTEXITCODE -ne 0) { throw "dotnet build failed for $Target" }
+    }
+}
+
+# ------------------------------------------------------------
+
+$depsDir         = "deps"
+$orderOut        = Join-Path $depsDir "_order.txt"
 $overallFailures = @()
 $buildResults    = [System.Collections.Generic.List[hashtable]]::new()
 
@@ -33,26 +65,9 @@ foreach ($repoName in $order) {
     try {
 
         if ($null -ne $solution) {
-
-            if ($usesPackagesConfig) {
-                Write-Host "Detected legacy project (packages.config) — using NuGet restore + MSBuild"
-                nuget restore $solution.FullName -NonInteractive
-                if ($LASTEXITCODE -ne 0) { throw "NuGet restore failed for $repoName" }
-
-                msbuild $solution.FullName `
-                    /m /p:Configuration=$Configuration `
-                    /p:Platform="Any CPU" `
-                    /verbosity:minimal /nologo
-                if ($LASTEXITCODE -ne 0) { throw "MSBuild failed for $repoName" }
-            }
-            else {
-                dotnet restore $solution.FullName
-                dotnet build $solution.FullName -c $Configuration --no-restore --nologo -m
-                if ($LASTEXITCODE -ne 0) { throw "dotnet build failed for $repoName" }
-            }
+            Invoke-BHoMBuild -Target $solution.FullName -IsLegacy $usesPackagesConfig -Config $Configuration
         }
         else {
-
             $projects = Get-ChildItem $repoPath -Recurse -Filter *.csproj -ErrorAction SilentlyContinue
 
             if ($projects.Count -eq 0) {
@@ -60,25 +75,8 @@ foreach ($repoName in $order) {
                 $buildType = "skipped"
             }
             else {
-
                 foreach ($p in $projects) {
-
-                    if ($usesPackagesConfig) {
-                        Write-Host "Detected legacy project (packages.config) — using NuGet restore + MSBuild"
-                        nuget restore $repoPath -NonInteractive
-                        if ($LASTEXITCODE -ne 0) { throw "NuGet restore failed for $($p.Name)" }
-
-                        msbuild $p.FullName `
-                            /m /p:Configuration=$Configuration `
-                            /p:Platform="Any CPU" `
-                            /verbosity:minimal /nologo
-                        if ($LASTEXITCODE -ne 0) { throw "MSBuild failed for $($p.Name)" }
-                    }
-                    else {
-                        dotnet restore $p.FullName
-                        dotnet build $p.FullName -c $Configuration --no-restore --nologo -m
-                        if ($LASTEXITCODE -ne 0) { throw "dotnet build failed for $($p.Name)" }
-                    }
+                    Invoke-BHoMBuild -Target $p.FullName -IsLegacy $usesPackagesConfig -Config $Configuration
                 }
             }
         }
