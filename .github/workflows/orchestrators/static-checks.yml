@@ -3,9 +3,10 @@ name: Static Checks
 on:
   workflow_call:
     inputs:
-      dotnet-version:
+      dotnet_version:
         type: string
         required: false
+        default: "8.x"
       compliance_checks:
         type: string
         required: false
@@ -16,19 +17,12 @@ on:
 
 jobs:
   format:
-    runs-on: ubuntu-latest
-    steps:
-        - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-          with:
-            fetch-depth: 0
-
-        - name: Run .NET Format
-          uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/dotnet-format@main
-          with:
-            dotnet-version: ${{ inputs.dotnet-version || '8.x' }}
+    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/checks/format/format.yml@main
+    with:
+      dotnet_version: ${{ inputs.dotnet_version }}
 
   compliance:
-    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/compliance.yml@main
+    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/checks/compliance/compliance.yml@main
     with:
       compliance_checks: ${{ inputs.compliance_checks }}
     secrets: inherit

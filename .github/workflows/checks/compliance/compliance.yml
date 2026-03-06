@@ -57,8 +57,8 @@ jobs:
         with:
           source: deps-assemblies
 
-      # ── 4. Check out DevOps_Toolkit to publish the ComplianceRunner ───────────
-      - name: Checkout DevOps_Toolkit (runner source)
+      # ── 4. Check out DevOps_Toolkit to publish the ComplianceRunner and scripts ─
+      - name: Checkout DevOps_Toolkit (runner source + scripts)
         uses: actions/checkout@v4
         with:
           repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
@@ -79,7 +79,7 @@ jobs:
       - name: Compute changed C# files
         id: changed
         run: |
-          & "_toolkit\.github\workflows\scripts\Get-ChangedFiles.ps1" `
+          & "_toolkit\.github\workflows\checks\compliance\scripts\Get-ChangedFiles.ps1" `
               -EventName "${{ github.event_name }}" `
               -BaseRef   "${{ github.base_ref }}"
 
@@ -88,7 +88,7 @@ jobs:
         id: run_checks
         if: steps.changed.outputs.count != '0'
         run: |
-          & "_toolkit\.github\workflows\scripts\Run-Compliance.ps1" `
+          & "_toolkit\.github\workflows\checks\compliance\scripts\Run-Compliance.ps1" `
               -Runner           "out\runner\ComplianceRunner.exe" `
               -ChangedFilesPath "changed_files.txt" `
               -Checks           "${{ inputs.compliance_checks }}"

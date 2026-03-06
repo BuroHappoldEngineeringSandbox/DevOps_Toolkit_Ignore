@@ -18,7 +18,7 @@ if (-not (Test-Path $Runner)) {
 # Without it, a scalar string splats as a char[] and each character
 # becomes a separate argument to the runner.
 $fileList = @(Get-Content $ChangedFilesPath | ForEach-Object { $_ -replace '/', '\' })
-$checks   = $Checks.Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries)
+$checks   = @($Checks -split '\s+' | Where-Object { $_ -ne '' })
 
 Write-Host "::notice title=Compliance checks::Running: $($checks -join ', ')"
 
