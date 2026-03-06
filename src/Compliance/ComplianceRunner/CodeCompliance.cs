@@ -3,160 +3,116 @@ using System.IO;
 using System.Linq;
 using System.Collections.Generic;
 using System.Text.Json;
-using BH.Engine.Test;                  // Modify.Merge (TestResult)
-using BH.Engine.Test.CodeCompliance;   // Compute.RunChecks(...)
-using BH.oM.Test;                      // TestStatus
-using BH.oM.Test.Results;              // TestResult, ITestInformation
+using BH.Engine.Test;                       // Modify.Merge, Query.IFullMessage
+using BH.Engine.Test.CodeCompliance;        // Compute.RunChecks
+using BH.oM.Test;                           // TestStatus
+using BH.oM.Test.Results;                   // TestResult, ITestInformation
+using BH.oM.Test.CodeCompliance;            // Error, Location, LineSpan, LineLocation
+using Error = BH.oM.Test.CodeCompliance.Error; // alias to avoid ambiguity with System
 
-// Local annotation type equivalent to BHoMBot's for console/SARIF/Actions use
+// Lightweight record carrying everything needed for any output format.
 public class Annotation
 {
-    public string FilePath        { get; set; } = "";
-    public int    LineStart       { get; set; }
-    public int    LineEnd         { get; set; }
-    public int    ColumnStart     { get; set; }
-    public int    ColumnEnd       { get; set; }
+    public string   FilePath         { get; set; } = "";
+    public int      LineStart        { get; set; }
+    public int      LineEnd          { get; set; }
+    public int      ColumnStart      { get; set; }
+    public int      ColumnEnd        { get; set; }
     /// <summary>"failure" (Error) or "warning" — matches GitHub's expected values.</summary>
-    public string Level           { get; set; } = "warning";
-    /// <summary>Full human-readable message including the docs link suffix, matching BHoMBot's FullMessage().</summary>
-    public string Message         { get; set; } = "";
+    public string   Level            { get; set; } = "warning";
+    /// <summary>
+    /// Full message including the " - For more information see &lt;url&gt;" suffix,
+    /// exactly matching BHoMBot's FullMessage() output.
+    /// </summary>
+    public string   Message          { get; set; } = "";
     /// <summary>Check method name (e.g. "HasValidCopyright") — used as the SARIF ruleId.</summary>
-    public string RuleName        { get; set; } = "";
-    /// <summary>Fully-qualified documentation URL (e.g. https://bhom.xyz/documentation/…/HasValidCopyright).</summary>
-    public string DocumentationUrl { get; set; } = "";
-    /// <summary>BHoM_Guid from the engine's Error object — unique identifier per finding for cross-run tracing.</summary>
-    public string BHoMGuid        { get; set; } = "";
+    public string   RuleName         { get; set; } = "";
+    /// <summary>Fully-qualified documentation URL built via BH.Engine.Base.Query.DocumentationURL.</summary>
+    public string   DocumentationUrl { get; set; } = "";
+    /// <summary>BHoM_Guid from the engine's Error — unique identifier per finding for cross-run tracing.</summary>
+    public string   BHoMGuid         { get; set; } = "";
     /// <summary>UTC timestamp at which the engine produced this finding.</summary>
-    public DateTime UTCTime       { get; set; }
+    public DateTime UTCTime          { get; set; }
 }
 
 public static class AnnotationConvert
 {
-    // Base URL that FullMessage() uses — see BHoM_Engine/BHoM_Engine/Query/DocumentationURL.cs
-    // and Test_Toolkit/CodeComplianceTest_Engine/Query/FullMessage.cs
-    private const string DocsBase =
-        "https://bhom.xyz/documentation/DevOps/Code%20Compliance%20and%20CI/Compliance%20Checks/";
+    // Compliance checks documentation sub-path — matches FullMessage.cs in CodeComplianceTest_Engine.
+    private const string DocsSubPath = "DevOps/Code%20Compliance%20and%20CI/Compliance%20Checks/";
 
     /// <summary>
-    /// Converts an ITestInformation (BH.oM.Test.CodeCompliance.Error) into a local Annotation,
-    /// faithfully replicating BHoMBot's FullMessage() format and surfacing all available metadata.
+    /// Converts an ITestInformation into an Annotation.
+    /// Casts directly to BH.oM.Test.CodeCompliance.Error to access all typed properties
+    /// without reflection, then delegates message formatting to
+    /// BH.Engine.Test.Query.IFullMessage — the same call path BHoMBot used.
     /// </summary>
     public static Annotation ToAnnotationEquivalent(this ITestInformation info)
     {
         var ann = new Annotation();
         ann.Level = info.Status == TestStatus.Error ? "failure" : "warning";
 
-        // --- Core message (raw, without docs suffix) ---
-        var rawMessage = info.GetType().GetProperty("Message")?.GetValue(info)?.ToString() ?? "";
+        // IFullMessage dispatches dynamically to the Error-specific overload in
+        // CodeComplianceTest_Engine which appends " - For more information see <url>".
+        // TrimEnd removes the two trailing newlines that overload adds for PR comment formatting.
+        ann.Message = BH.Engine.Test.Query.IFullMessage(info).TrimEnd();
 
-        // --- Rule name = method.Name stored by Check.cs via BHoMObject.Name ---
-        ann.RuleName = info.GetType().GetProperty("Name")?.GetValue(info)?.ToString() ?? "";
-
-        // --- Documentation URL: reconstruct from slug to match FullMessage() ---
-        // MessageAttribute stores only the slug (e.g. "HasValidCopyright"); we prepend DocsBase.
-        var slug = info.GetType().GetProperty("DocumentationLink")?.GetValue(info)?.ToString() ?? "";
-        ann.DocumentationUrl = string.IsNullOrEmpty(slug) ? "" : DocsBase + slug;
-
-        // --- Full message with docs suffix — matches BHoMBot's FullMessage() output ---
-        ann.Message = string.IsNullOrEmpty(ann.DocumentationUrl)
-            ? rawMessage
-            : $"{rawMessage} - For more information see {ann.DocumentationUrl}";
-
-        // --- BHoM_Guid for cross-run tracing ---
-        ann.BHoMGuid = info.GetType().GetProperty("BHoM_Guid")?.GetValue(info)?.ToString() ?? "";
-
-        // --- UTCTime ---
-        if (info.GetType().GetProperty("UTCTime")?.GetValue(info) is DateTime utc)
-            ann.UTCTime = utc;
-
-        // --- Location ---
-        var locObj = info.GetType().GetProperty("Location")?.GetValue(info);
-        if (locObj != null)
+        if (info is Error error)
         {
-            ann.FilePath = locObj.GetType().GetProperty("FilePath")?.GetValue(locObj)?.ToString() ?? "";
+            ann.RuleName = error.Name ?? "";
+            ann.BHoMGuid = error.BHoM_Guid.ToString();
+            ann.UTCTime  = error.UTCTime;
 
-            var lineObj = locObj.GetType().GetProperty("Line")?.GetValue(locObj);
-            if (lineObj != null)
+            // Build the full URL the same way FullMessage.cs does — via DocumentationURL().
+            ann.DocumentationUrl = string.IsNullOrEmpty(error.DocumentationLink)
+                ? ""
+                : BH.Engine.Base.Query.DocumentationURL(DocsSubPath) + error.DocumentationLink;
+
+            if (error.Location != null)
             {
-                var startObj = lineObj.GetType().GetProperty("Start")?.GetValue(lineObj);
-                var endObj   = lineObj.GetType().GetProperty("End")?.GetValue(lineObj);
-
-                if (startObj is { } s)
-                {
-                    if (s.GetType().GetProperty("Line")?.GetValue(s)   is int sl) ann.LineStart   = sl;
-                    if (s.GetType().GetProperty("Column")?.GetValue(s) is int sc) ann.ColumnStart = sc;
-                }
-                if (endObj is { } e)
-                {
-                    if (e.GetType().GetProperty("Line")?.GetValue(e)   is int el) ann.LineEnd   = el;
-                    if (e.GetType().GetProperty("Column")?.GetValue(e) is int ec) ann.ColumnEnd = ec;
-                }
+                ann.FilePath    = error.Location.FilePath ?? "";
+                ann.LineStart   = error.Location.Line?.Start?.Line   ?? 0;
+                ann.ColumnStart = error.Location.Line?.Start?.Column ?? 0;
+                ann.LineEnd     = error.Location.Line?.End?.Line     ?? 0;
+                ann.ColumnEnd   = error.Location.Line?.End?.Column   ?? 0;
             }
         }
 
         return ann;
     }
 
-    /// <summary>
-    /// Verbose console dump of all available properties on a compliance finding.
-    /// </summary>
+    /// <summary>Verbose console dump of all fields on a compliance finding.</summary>
     public static void LogDetailedFinding(ITestInformation info)
     {
         if (info == null) return;
-        var t = info.GetType();
 
         Console.WriteLine("  ---");
-        Console.WriteLine($"  Status: {info.Status}");
-        SafeLogProperty(t, info, "Message",           "Message");
-        SafeLogProperty(t, info, "Name",              "RuleName");
-        SafeLogProperty(t, info, "DocumentationLink", "DocSlug");
-        SafeLogProperty(t, info, "UTCTime",           "UTCTime",
-            v => v is DateTime dt ? dt.ToString("dd/MM/yyyy HH:mm:ss") : (v?.ToString() ?? ""));
-        SafeLogProperty(t, info, "BHoM_Guid",         "BHoM_Guid");
+        Console.WriteLine($"  Status:    {info.Status}");
 
-        var loc = t.GetProperty("Location")?.GetValue(info);
-        if (loc != null)
+        if (info is Error error)
         {
-            var locT = loc.GetType();
-            Console.WriteLine("  Location:");
-            SafeLogProperty(locT, loc, "FilePath", "    FilePath");
-            var lineObj = locT.GetProperty("Line")?.GetValue(loc);
-            if (lineObj != null)
+            Console.WriteLine($"  Message:   {error.Message}");
+            Console.WriteLine($"  RuleName:  {error.Name}");
+            Console.WriteLine($"  DocSlug:   {error.DocumentationLink}");
+            Console.WriteLine($"  UTCTime:   {error.UTCTime:dd/MM/yyyy HH:mm:ss}");
+            Console.WriteLine($"  BHoM_Guid: {error.BHoM_Guid}");
+
+            if (error.Location != null)
             {
-                var lineT  = lineObj.GetType();
-                var start  = lineT.GetProperty("Start")?.GetValue(lineObj);
-                var end    = lineT.GetProperty("End")?.GetValue(lineObj);
-                var sl = start?.GetType().GetProperty("Line")?.GetValue(start);
-                var sc = start?.GetType().GetProperty("Column")?.GetValue(start);
-                var el = end?.GetType().GetProperty("Line")?.GetValue(end);
-                var ec = end?.GetType().GetProperty("Column")?.GetValue(end);
-                Console.WriteLine($"    Start: line {sl ?? ""}, col {sc ?? ""}");
-                Console.WriteLine($"    End:   line {el ?? ""}, col {ec ?? ""}");
+                Console.WriteLine("  Location:");
+                Console.WriteLine($"    FilePath:  {error.Location.FilePath}");
+                Console.WriteLine($"    Start:     line {error.Location.Line?.Start?.Line}, col {error.Location.Line?.Start?.Column}");
+                Console.WriteLine($"    End:       line {error.Location.Line?.End?.Line}, col {error.Location.Line?.End?.Column}");
             }
         }
-
-        SafeLogProperty(t, info, "Fragments",  "Fragments",  v => v?.GetType().FullName ?? "");
-        SafeLogProperty(t, info, "Tags",       "Tags",       v => v?.GetType().FullName ?? "");
-        SafeLogProperty(t, info, "CustomData", "CustomData", v => v?.GetType().FullName ?? "");
-    }
-
-    static void SafeLogProperty(Type type, object instance, string propName, string label,
-                                Func<object?, string>? format = null)
-    {
-        var prop = type.GetProperty(propName);
-        if (prop == null) return;
-        try
+        else
         {
-            var value = prop.GetValue(instance);
-            var text  = format != null ? (format(value) ?? "") : (value?.ToString() ?? "");
-            if (!string.IsNullOrEmpty(text) || value != null)
-                Console.WriteLine($"  {label}: {text}");
+            // Fallback for any non-Error ITestInformation (future-proofing).
+            Console.WriteLine($"  FullMessage: {BH.Engine.Test.Query.IFullMessage(info).TrimEnd()}");
         }
-        catch { /* ignore reflection errors */ }
     }
 }
 
-/// <summary>Check-type metadata for title/summary/text (matches legacy BHoMBot).</summary>
+/// <summary>Check-type metadata for title/summary/text (mirrors BHoMBot's check outputs).</summary>
 static class CheckMetadata
 {
     public static void GetOutput(string checkType, TestStatus status,
@@ -218,7 +174,7 @@ class Program
         bool verbose = outputFormat == "console";
         if (verbose) Console.WriteLine($"Running BHoM {checkType.ToUpper()} compliance...");
 
-        var mergedResult  = new TestResult() { Status = TestStatus.Pass, Information = new List<ITestInformation>() };
+        var mergedResult   = new TestResult() { Status = TestStatus.Pass, Information = new List<ITestInformation>() };
         var allAnnotations = new List<Annotation>();
 
         foreach (var file in files)
@@ -279,7 +235,7 @@ class Program
             {
                 var path  = string.IsNullOrEmpty(a.FilePath) ? "unknown" : a.FilePath.Replace("\\", "/");
                 var level = a.Level == "failure" ? "error" : "warning";
-                // Message already includes " - For more information see <url>" suffix (FullMessage parity)
+                // Message already contains the " - For more information see <url>" suffix.
                 var msg   = a.Message.Replace("\r", "").Replace("\n", " ");
                 var col   = a.ColumnStart > 0 ? $",col={a.ColumnStart}" : "";
                 Console.WriteLine($"::{level} file={path},line={a.LineStart}{col}::{msg}");
@@ -307,7 +263,7 @@ class Program
                     ["ruleName"]         = a.RuleName,
                     ["documentationUrl"] = a.DocumentationUrl,
                     ["bhomGuid"]         = a.BHoMGuid,
-                    ["utcTime"]          = a.UTCTime.ToString("o")   // ISO 8601
+                    ["utcTime"]          = a.UTCTime.ToString("o")  // ISO 8601
                 }).ToList()
             };
             Console.WriteLine(JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = false }));
@@ -324,16 +280,16 @@ class Program
                 Console.WriteLine(sarif);
         }
 
-        // Exit code mirrors BHoMBot: failure only on Error; Warning and Pass are success.
+        // Exit code mirrors BHoMBot: failure only on Error; Warning and Pass are both success.
         return mergedResult.Status == TestStatus.Error ? 1 : 0;
     }
 
     static (string outputFormat, string? sarifFilePath, string? checkType, List<string>? files)
         ParseArgs(string[] args)
     {
-        string  outputFormat   = "console";
-        string? sarifFilePath  = null;
-        var     rest           = new List<string>();
+        string  outputFormat  = "console";
+        string? sarifFilePath = null;
+        var     rest          = new List<string>();
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -362,7 +318,7 @@ class Program
     static string BuildSarif(string checkType, string title, List<Annotation> annotations)
     {
         // Build a per-rule entry from distinct rule names so each check method appears
-        // as its own rule in Code Scanning, complete with helpUri to the BHoM docs page.
+        // as its own rule in Code Scanning, with a helpUri linking to its BHoM docs page.
         var ruleMap = annotations
             .Where(a => !string.IsNullOrEmpty(a.RuleName))
             .GroupBy(a => a.RuleName)
@@ -404,18 +360,15 @@ class Program
             if (a.ColumnStart > 0) region["startColumn"] = a.ColumnStart;
             if (a.ColumnEnd   > 0) region["endColumn"]   = a.ColumnEnd;
 
-            // Extra metadata in the SARIF properties bag (not part of SARIF core but
-            // preserved for tooling that consumes raw SARIF, e.g. dashboards).
             var props = new Dictionary<string, object>();
             if (!string.IsNullOrEmpty(a.BHoMGuid)) props["bhomGuid"] = a.BHoMGuid;
             if (a.UTCTime != default)               props["utcTime"]  = a.UTCTime.ToString("o");
 
             var result = new Dictionary<string, object>
             {
-                ["ruleId"]  = ruleId,
-                ["level"]   = a.Level == "failure" ? "error" : "warning",
-                // Message includes the "For more information see..." suffix (FullMessage parity)
-                ["message"] = new Dictionary<string, object> { ["text"] = a.Message },
+                ["ruleId"]    = ruleId,
+                ["level"]     = a.Level == "failure" ? "error" : "warning",
+                ["message"]   = new Dictionary<string, object> { ["text"] = a.Message },
                 ["locations"] = new[]
                 {
                     new Dictionary<string, object>
@@ -452,7 +405,7 @@ class Program
                         ["driver"] = new Dictionary<string, object>
                         {
                             ["name"]           = "BHoM Compliance Runner",
-                            ["informationUri"] = "https://bhom.xyz/documentation/DevOps/Code%20Compliance%20and%20CI/Compliance%20Checks/",
+                            ["informationUri"] = BH.Engine.Base.Query.DocumentationURL("DevOps/Code%20Compliance%20and%20CI/Compliance%20Checks/"),
                             ["rules"]          = rulesArray
                         }
                     },
