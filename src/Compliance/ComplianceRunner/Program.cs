@@ -13,17 +13,21 @@ class Program
     static int Main(string[] args)
     {
         // CLI: ComplianceRunner [--output console|github|json|sarif] [--sarif-file PATH]
-        //                       <code|copyright|documentation> <file1.cs> [file2.cs ...]
-        var (outputFormat, sarifFilePath, checkType, files) = ParseArgs(args);
+        //                       [--org-url URL]
+        //                       <code|copyright|documentation|project> <file1> [file2 ...]
+        var (outputFormat, sarifFilePath, checkType, files, orgUrl) = ParseArgs(args);
         if (checkType == null || files == null || files.Count == 0)
         {
             Console.WriteLine("Usage:");
             Console.WriteLine("  ComplianceRunner [--output console|github|json|sarif] [--sarif-file PATH]");
-            Console.WriteLine("                   <code|copyright|documentation> <file1.cs> [file2.cs ...]");
+            Console.WriteLine("                   [--org-url REPO_URL]");
+            Console.WriteLine("                   <code|copyright|documentation|project> <file1> [file2 ...]");
             Console.WriteLine();
             Console.WriteLine("  --output github  = emit ::error/::warning for GitHub Actions (shows in PR).");
             Console.WriteLine("  --output json    = single JSON object to stdout.");
             Console.WriteLine("  --output sarif   = SARIF 2.1 to stdout (or --sarif-file for a file).");
+            Console.WriteLine("  --org-url URL    = repository URL required for 'project' checks");
+            Console.WriteLine("                     e.g. https://github.com/BHoM/BHoM_Engine");
             return 1;
         }
 
@@ -38,6 +42,9 @@ class Program
 
         foreach (var file in files)
         {
+            // Each check type is only relevant to certain file extensions.
+            if (!IsRelevantFile(file, checkType)) continue;
+
             if (verbose) Console.WriteLine($"\n=== Checking: {file} ===");
 
             if (!File.Exists(file))
@@ -46,7 +53,40 @@ class Program
                 continue;
             }
 
-            var resultForThisFile = BH.Engine.Test.CodeCompliance.Compute.RunChecks(file, checkType);
+            TestResult resultForThisFile;
+
+            if (checkType == "project")
+            {
+                if (file.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+                    resultForThisFile = BH.Engine.Test.CodeCompliance.Compute.CheckProjectFile(file, orgUrl);
+                else
+                    resultForThisFile = BH.Engine.Test.CodeCompliance.Compute.CheckAssemblyInfo(file, orgUrl);
+
+                // Remap absolute location paths back to the relative file path so
+                // annotations point to the correct diff line — mirrors BHoMBot ProjectCompliance.cs.
+                if (resultForThisFile?.Information != null)
+                {
+                    resultForThisFile.Information = resultForThisFile.Information
+                        .OfType<BH.oM.Test.CodeCompliance.Error>()
+                        .Select(e => (ITestInformation)new BH.oM.Test.CodeCompliance.Error
+                        {
+                            Status            = e.Status,
+                            Message           = e.Message,
+                            DocumentationLink = e.DocumentationLink,
+                            Location          = new BH.oM.Test.CodeCompliance.Location
+                            {
+                                FilePath = file,
+                                Line     = e.Location?.Line
+                            }
+                        })
+                        .ToList();
+                }
+            }
+            else
+            {
+                resultForThisFile = BH.Engine.Test.CodeCompliance.Compute.RunChecks(file, checkType);
+            }
+
             if (verbose) Console.WriteLine($"  Result Status: {resultForThisFile.Status}");
 
             mergedResult = mergedResult.Merge(resultForThisFile);
@@ -143,11 +183,12 @@ class Program
         return mergedResult.Status == TestStatus.Error ? 1 : 0;
     }
 
-    static (string outputFormat, string? sarifFilePath, string? checkType, List<string>? files)
+    static (string outputFormat, string? sarifFilePath, string? checkType, List<string>? files, string orgUrl)
         ParseArgs(string[] args)
     {
         string  outputFormat  = "console";
         string? sarifFilePath = null;
+        string  orgUrl        = "";
         var     rest          = new List<string>();
 
         for (int i = 0; i < args.Length; i++)
@@ -161,16 +202,30 @@ class Program
             }
             else if ((args[i] == "--sarif-file" || args[i] == "--sarif") && i + 1 < args.Length)
                 sarifFilePath = args[++i];
+            else if (args[i] == "--org-url" && i + 1 < args.Length)
+                orgUrl = args[++i];
             else
                 rest.Add(args[i]);
         }
 
-        if (rest.Count < 2) return (outputFormat, sarifFilePath, null, null);
+        if (rest.Count < 2) return (outputFormat, sarifFilePath, null, null, orgUrl);
 
         var checkType = rest[0].Trim().ToLowerInvariant();
-        if (checkType != "code" && checkType != "copyright" && checkType != "documentation")
-            return (outputFormat, sarifFilePath, null, null);
+        if (checkType != "code" && checkType != "copyright" &&
+            checkType != "documentation" && checkType != "project")
+            return (outputFormat, sarifFilePath, null, null, orgUrl);
 
-        return (outputFormat, sarifFilePath, checkType, rest.Skip(1).ToList());
+        return (outputFormat, sarifFilePath, checkType, rest.Skip(1).ToList(), orgUrl);
+    }
+
+    /// <summary>Returns true when a file should be processed by the given check type.</summary>
+    static bool IsRelevantFile(string file, string checkType)
+    {
+        if (checkType == "project")
+            return file.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) ||
+                   Path.GetFileName(file).Equals("AssemblyInfo.cs", StringComparison.OrdinalIgnoreCase);
+
+        // code, copyright, documentation all operate on .cs files.
+        return file.EndsWith(".cs", StringComparison.OrdinalIgnoreCase);
     }
 }

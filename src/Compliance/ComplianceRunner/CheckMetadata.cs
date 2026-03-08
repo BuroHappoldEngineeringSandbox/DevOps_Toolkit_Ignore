@@ -11,6 +11,7 @@ static class CheckMetadata
             "code"          => "Check Code Compliance",
             "copyright"     => "Check Copyright Compliance",
             "documentation" => "Check Documentation Compliance",
+            "project"       => "Check Project Compliance",
             _               => "Check Compliance"
         };
 
@@ -21,9 +22,12 @@ static class CheckMetadata
                 "code"          => "This check has failed due to compliance errors",
                 "copyright"     => "This check has failed due to copyright errors",
                 "documentation" => "This check has failed due to documentation errors",
+                "project"       => "This check has failed due to project compliance errors",
                 _               => "This check has failed due to compliance errors"
             };
-            text = "There were some compliance issues with the files changed in this Pull Request";
+            text = checkType?.ToLowerInvariant() == "project"
+                ? "There were some compliance issues with either the .csproj or AssemblyInfo files changed in this Pull Request"
+                : "There were some compliance issues with the files changed in this Pull Request";
         }
         else if (status == TestStatus.Warning)
         {
