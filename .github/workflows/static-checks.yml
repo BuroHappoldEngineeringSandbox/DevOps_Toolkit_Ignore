@@ -182,6 +182,11 @@ jobs:
       # ── 2. Detect relevant changed files BEFORE any expensive work ─────────
       #       Gates all subsequent heavy steps so PRs that only touch YAML/docs
       #       exit in seconds without building Test_Toolkit at all.
+      #
+      #       Uses the exact PR base SHA (not the branch name) with a two-dot
+      #       diff to avoid "no merge base" failures on shallow clones.
+      #       Three-dot diff (origin/branch...HEAD) requires a common ancestor
+      #       in the shallow graph, which is unavailable with fetch-depth:1.
       - name: Compute changed files
         id: changed
         run: |
@@ -191,9 +196,12 @@ jobs:
             exit 0
           }
 
-          git fetch --depth=1 origin ${{ github.base_ref }}
+          # Fetch the exact commit the PR was opened from — depth=1 is enough
+          # because we diff directly against this SHA (no merge-base lookup needed).
+          $baseSha = "${{ github.event.pull_request.base.sha }}"
+          git fetch --depth=1 origin $baseSha
 
-          $files = git diff --name-only --diff-filter=ACMRT "origin/${{ github.base_ref }}...HEAD" |
+          $files = git diff --name-only --diff-filter=ACMRT "$baseSha" HEAD |
                    Where-Object { $_.ToLower().EndsWith(".cs") -or $_.ToLower().EndsWith(".csproj") }
 
           $count = ($files | Measure-Object).Count
