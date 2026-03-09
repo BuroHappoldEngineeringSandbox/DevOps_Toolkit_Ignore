@@ -24,7 +24,7 @@ public static class AnnotationConvert
         // IFullMessage dispatches dynamically to the Error-specific overload in
         // CodeComplianceTest_Engine which appends " - For more information see <url>".
         // TrimEnd removes the two trailing newlines that overload adds for PR comment formatting.
-        ann.Message = BH.Engine.Test.Query.IFullMessage(info).TrimEnd();
+        ann.Message = BH.Engine.Test.Query.IFullMessage(info)?.TrimEnd() ?? "";
 
         if (info is Error error)
         {
@@ -77,7 +77,7 @@ public static class AnnotationConvert
         else
         {
             // Fallback for any non-Error ITestInformation (future-proofing).
-            Console.WriteLine($"  FullMessage: {BH.Engine.Test.Query.IFullMessage(info).TrimEnd()}");
+            Console.WriteLine($"  FullMessage: {BH.Engine.Test.Query.IFullMessage(info)?.TrimEnd() ?? ""}");
         }
     }
 }

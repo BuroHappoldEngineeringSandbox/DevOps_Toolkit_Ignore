@@ -87,6 +87,12 @@ class ComplianceRunner
                 resultForThisFile = BH.Engine.Test.CodeCompliance.Compute.RunChecks(file, checkType);
             }
 
+            if (resultForThisFile == null)
+            {
+                Console.WriteLine($"  [SKIP] No result returned for: {file}");
+                continue;
+            }
+
             if (verbose) Console.WriteLine($"  Result Status: {resultForThisFile.Status}");
 
             mergedResult = mergedResult.Merge(resultForThisFile);
