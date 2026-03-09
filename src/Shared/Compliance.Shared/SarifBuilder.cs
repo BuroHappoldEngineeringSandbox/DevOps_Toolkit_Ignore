@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 
-static class SarifBuilder
+public static class SarifBuilder
 {
     public static string Build(string checkType, string title, List<Annotation> annotations)
     {

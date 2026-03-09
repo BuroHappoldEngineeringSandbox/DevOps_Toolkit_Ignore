@@ -1,3 +1,5 @@
 <Solution>
-  <Project Path="src/Compliance/ComplianceRunner/ComplianceRunner.csproj" Id="a8c926b8-cdc3-4f3f-86c1-a8b92f87663d" />
+  <Project Path="src/ComplianceRunner/ComplianceRunner.csproj" />
+  <Project Path="src/DatasetComplianceRunner/DatasetComplianceRunner.csproj" Id="073f2c91-6a2b-4af2-91f8-a6b1fffe5c91" />
+  <Project Path="src/Shared/Compliance.Shared/Compliance.Shared.csproj" Id="a2ff49f5-c2db-4687-b981-e48539def63f" />
 </Solution>
