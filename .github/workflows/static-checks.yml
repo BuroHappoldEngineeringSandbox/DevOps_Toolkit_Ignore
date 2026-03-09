@@ -125,19 +125,51 @@ jobs:
           for csproj in "${!projects[@]}"; do
             echo "::group::dotnet format — $csproj"
 
+            # Build --include list using paths relative to the project directory,
+            # which is what dotnet format expects (not paths relative to repo root).
+            proj_dir=$(dirname "$csproj")
+            if [ "$proj_dir" = "." ]; then
+              # Project is at repo root — paths are already correct.
+              includes=$(cat changed_cs_files.txt | tr '\n' ' ')
+            else
+              # Strip the project directory prefix so dotnet format can locate the files.
+              includes=$(grep "^${proj_dir}/" changed_cs_files.txt \
+                           | sed "s|^${proj_dir}/||" \
+                           | tr '\n' ' ')
+            fi
+
+            if [ -z "$(echo "$includes" | tr -d ' ')" ]; then
+              echo "No changed files in this project — skipping."
+              echo "::endgroup::"
+              continue
+            fi
+
             # Capture output so we can post-process it for per-file annotations.
             format_out=$(dotnet format "$csproj" \
               --verify-no-changes \
               --verbosity normal \
-              --include $(cat changed_cs_files.txt | tr '\n' ' ') 2>&1) || failed=1
+              --include $includes 2>&1) || failed=1
 
             echo "$format_out"
 
-            # Emit ::error file=<path>:: for each file dotnet format flagged.
-            # dotnet format prints "  Formatted code file '<path>'." for violations.
-            echo "$format_out" | grep -oP "(?<=Formatted code file ')([^']+)" | while read -r violating_file; do
-              echo "::error file=$violating_file::Formatting violation — run 'dotnet format' locally to fix."
-            done
+            # Emit ::error file=<repo-root-relative-path>:: for each flagged file.
+            # With --verify-no-changes, dotnet format prints:
+            #   "  Run dotnet format to fix formatting in '<proj-relative-path>'."
+            # We re-apply the project prefix so the annotation path matches the
+            # file path in the PR diff.
+            # || true prevents pipefail aborting the script when grep finds no
+            # matches (the no-violation / passing case).
+            echo "$format_out" \
+              | grep -oP "(?<=fix formatting in ')([^']+)" \
+              | while read -r proj_rel_file; do
+                  if [ "$proj_dir" = "." ]; then
+                    full_path="$proj_rel_file"
+                  else
+                    full_path="${proj_dir}/${proj_rel_file}"
+                  fi
+                  echo "::error file=$full_path::Formatting violation — run 'dotnet format' locally to fix."
+                done \
+              || true
 
             echo "::endgroup::"
           done
