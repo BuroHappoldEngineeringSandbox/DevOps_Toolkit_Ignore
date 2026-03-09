@@ -8,7 +8,7 @@ using BH.Engine.Test.CodeCompliance;        // Compute.RunChecks
 using BH.oM.Test;                           // TestStatus
 using BH.oM.Test.Results;                   // TestResult, ITestInformation
 
-class Program
+class ComplianceRunner
 {
     static int Main(string[] args)
     {
