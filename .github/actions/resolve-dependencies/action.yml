@@ -147,12 +147,19 @@ runs:
       with:
         path: deps-assemblies
         key: depsasm-${{ runner.os }}-${{ inputs.dotnet_version }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
+        # Fallback prefix: if the exact key misses (e.g. a dep got a new commit, or a
+        # prior run was cancelled before its post-step saved the cache), restore the
+        # most recent assembly cache for the same OS/dotnet/config combination.
+        # cache-matched-key is populated for both exact and prefix matches; the build
+        # step below uses it to skip compilation when any usable cache was found.
+        restore-keys: |
+          depsasm-${{ runner.os }}-${{ inputs.dotnet_version }}-${{ inputs.configuration }}-
 
     # ------------------------------------------------------------
     # Build dependencies if cache missed
     # ------------------------------------------------------------
     - name: Build dependencies
-      if: steps.cache.outputs.cache-hit != 'true'
+      if: steps.cache.outputs.cache-hit != 'true' && steps.cache.outputs.cache-matched-key == ''
       shell: pwsh
       run: |
         $script = Join-Path $env:GITHUB_ACTION_PATH "scripts/Build-Dependencies.ps1"
