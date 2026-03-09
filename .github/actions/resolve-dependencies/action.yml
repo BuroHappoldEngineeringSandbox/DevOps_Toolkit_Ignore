@@ -62,10 +62,16 @@ runs:
       uses: microsoft/setup-msbuild@v2
 
     # ------------------------------------------------------------
-    # Cache NuGet packages + MSBuild graph cache
+    # Restore NuGet packages cache
+    # actions/cache/restore@v4 is used instead of actions/cache@v4
+    # because this is a composite action from a different repository.
+    # The post-step save of actions/cache@v4 does not execute in
+    # cross-repo composite action contexts — cache saves must be
+    # explicit inline steps (actions/cache/save@v4) to work correctly.
     # ------------------------------------------------------------
-    - name: Cache NuGet packages
-      uses: actions/cache@v4
+    - name: Restore NuGet packages cache
+      id: nuget-cache
+      uses: actions/cache/restore@v4
       with:
         path: |
           ~/.nuget/packages
@@ -141,11 +147,12 @@ runs:
         "keypart=$keypart" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
     # ------------------------------------------------------------
-    # Restore assemblies from cache if available
+    # Restore dependency assembly cache
+    # See note above on actions/cache/restore vs actions/cache.
     # ------------------------------------------------------------
     - name: Restore dependency assembly cache
       id: cache
-      uses: actions/cache@v4
+      uses: actions/cache/restore@v4
       with:
         path: deps-assemblies
         # dotnet_version intentionally excluded: BHoM assemblies target fixed frameworks
@@ -155,22 +162,48 @@ runs:
         # the cache (e.g. old compliance.yml defaulted to 10.x, new to 8.x).
         key: depsasm-${{ runner.os }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
         # Fallback prefix: if the exact key misses (e.g. a dep got a new commit, or a
-        # prior run was cancelled before its post-step saved the cache), restore the
-        # most recent assembly cache for the same OS/config combination.
+        # prior run was cancelled before its cache was saved), restore the most recent
+        # assembly cache for the same OS/config combination.
         # cache-matched-key is populated for both exact and prefix matches; the build
-        # step below uses it to skip compilation when any usable cache was found.
+        # and save steps below gate on it to skip when any usable cache was found.
         restore-keys: |
           depsasm-${{ runner.os }}-${{ inputs.configuration }}-
 
     # ------------------------------------------------------------
-    # Build dependencies if cache missed
+    # Build dependencies if no usable cache was found
     # ------------------------------------------------------------
     - name: Build dependencies
-      if: steps.cache.outputs.cache-hit != 'true' && steps.cache.outputs.cache-matched-key == ''
+      if: steps.cache.outputs.cache-matched-key == ''
       shell: pwsh
       run: |
         $script = Join-Path $env:GITHUB_ACTION_PATH "scripts/Build-Dependencies.ps1"
         & $script -Configuration "${{ inputs.configuration }}"
+
+    # ------------------------------------------------------------
+    # Save dependency assembly cache (only when a fresh build ran)
+    # Explicit inline save — post-step saves do not work in
+    # cross-repo composite action contexts (see note above).
+    # ------------------------------------------------------------
+    - name: Save dependency assembly cache
+      if: steps.cache.outputs.cache-matched-key == ''
+      uses: actions/cache/save@v4
+      with:
+        path: deps-assemblies
+        key: depsasm-${{ runner.os }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
+
+    # ------------------------------------------------------------
+    # Save NuGet packages cache (when exact key was not found)
+    # Saves after builds so any newly-downloaded packages are included.
+    # Explicit inline save — see note above.
+    # ------------------------------------------------------------
+    - name: Save NuGet packages cache
+      if: steps.nuget-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ~/.nuget/packages
+          ~\AppData\Local\Microsoft\MSBuild\Cache
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj','**/global.json','**/nuget.config') }}
 
     # ------------------------------------------------------------
     # Upload assemblies

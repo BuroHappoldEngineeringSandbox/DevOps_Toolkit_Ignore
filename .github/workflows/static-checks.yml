@@ -36,7 +36,7 @@ on:
       run_dataset_check:
         type: boolean
         required: false
-        default: true
+        default: false
         # Set to true for repos that contain a datasets/ folder.
         # Runs IsValidDataset against every changed .json file under datasets/.
     secrets:
@@ -88,6 +88,7 @@ jobs:
       contents: read
       pull-requests: read
       security-events: write   # required for SARIF upload
+      actions: write            # required for cache save in cross-repo composite actions
     defaults:
       run:
         shell: pwsh
@@ -280,6 +281,7 @@ jobs:
       contents: read
       pull-requests: read
       security-events: write   # required for SARIF upload
+      actions: write            # required for cache save in cross-repo composite actions
     defaults:
       run:
         shell: pwsh
