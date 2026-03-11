@@ -178,24 +178,27 @@ jobs:
               continue
             fi
 
-            format_out=$(dotnet format "$csproj" \
+            # --folder mode bypasses workspace/reference loading entirely so the
+            # check works even when project DLL references are not restored locally
+            # or in environments where only the SDK is available. Only whitespace
+            # rules from .editorconfig are enforced (indent_style, indent_size, etc).
+            format_out=$(dotnet format whitespace --folder "$proj_dir" \
               --verify-no-changes \
               --verbosity normal \
               "${include_args[@]}" 2>&1) || failed=1
 
             echo "$format_out"
 
-            # Emit a per-file annotation for each violation so it appears
-            # inline on the file in the PR diff.
+            # Folder mode emits violations as: <abs-path>(line,col): error WHITESPACE: ...
+            # Extract the file path, deduplicate per-file, strip workspace prefix,
+            # and emit one ::error annotation per file so it appears in the PR diff.
             echo "$format_out" \
-              | grep -oP "(?<=fix formatting in ')([^']+)" \
-              | while IFS= read -r proj_rel_file; do
-                  if [ "$proj_dir" = "." ]; then
-                    full_path="$proj_rel_file"
-                  else
-                    full_path="${proj_dir}/${proj_rel_file}"
-                  fi
-                  echo "::error file=$full_path::Formatting violation — run 'dotnet format' locally to fix."
+              | grep "error WHITESPACE:" \
+              | grep -oP "^.*\.cs(?=\()" \
+              | sort -u \
+              | while IFS= read -r filepath; do
+                  rel_path="${filepath#$GITHUB_WORKSPACE/}"
+                  echo "::error file=$rel_path::Formatting violation — run 'dotnet format' locally to fix."
                 done || true
 
             echo "::endgroup::"
