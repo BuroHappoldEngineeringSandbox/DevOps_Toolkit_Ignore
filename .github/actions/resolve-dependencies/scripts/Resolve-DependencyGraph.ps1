@@ -1,7 +1,8 @@
 param(
-    [string]$DepsFile   = "dependencies.txt",
-    [string]$Mode       = "caller",   # "caller" | "seeds"
-    [string]$Seeds      = ""          # used only when Mode = "seeds"
+    [string]$DepsFile         = "dependencies.txt",
+    [string]$Mode             = "caller",   # "caller" | "seeds"
+    [string]$Seeds            = "",         # used only when Mode = "seeds"
+    [string]$AdditionalSeeds  = ""          # used only when Mode = "caller"; appended after caller graph
 )
 
 Set-StrictMode -Version Latest
@@ -208,6 +209,33 @@ else {
 
     if ($phaseList.Count -eq 0) {
         Write-Host "(none)"
+    }
+}
+
+# ------------------------------------------------------------
+# Additional seeds (caller mode only)
+# Appended after the caller graph so that caller assemblies
+# are built first, matching the dependency order BHoMBot used
+# when it resolved the caller repo before Test_Toolkit etc.
+# Ignored when mode=seeds (seeds already accepts multiple repos).
+# ------------------------------------------------------------
+if ($Mode -ne "seeds" -and -not [string]::IsNullOrWhiteSpace($AdditionalSeeds)) {
+    Write-Host "----- Additional seeds (appended to caller graph) -----"
+
+    $extraList = @($AdditionalSeeds.Trim().Split("`n")) |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { $_ -ne "" -and $_.IndexOfAny(@(' ', "`t")) -lt 0 } |
+        Where-Object { $_ -match "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(@[A-Za-z0-9._/-]+)?$" }
+
+    foreach ($s in $extraList) {
+        $sp    = Parse-RepoSpec $s
+        $chain = Build-Chain $sp.Key $true $sp.Ref
+        foreach ($item in $chain) {
+            if (-not $phaseList.Contains($item.Key)) {
+                $phaseList.Add($item.Key) | Out-Null
+            }
+        }
+        Write-Host "  Extra seed: $($sp.Key)"
     }
 }
 

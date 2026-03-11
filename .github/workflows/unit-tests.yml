@@ -1,0 +1,207 @@
+name: Unit Tests
+
+on:
+  workflow_call:
+    inputs:
+      dotnet_version:
+        type: string
+        required: false
+        default: "10.x"
+        # Must match the TargetFramework of your test projects.
+        # BHoM test projects currently target net10.0.
+      configuration:
+        type: string
+        required: false
+        default: "Release"
+      test_solution:
+        type: string
+        required: false
+        default: ".ci/tests/UnitTests/UnitTests.slnx"
+        # Path to the test solution relative to the repo root.
+        # Both .sln and .slnx formats are supported (requires .NET 9+ SDK).
+      run_coverage:
+        type: boolean
+        required: false
+        default: true
+        # Set to false to skip code coverage collection and reporting.
+      coverage_on_push:
+        type: boolean
+        required: false
+        default: false
+        # Set to true to also post the coverage report as a PR comment on
+        # push events to main/develop. Only meaningful when run_coverage is true.
+    secrets:
+      GH_TOKEN:
+        required: false   # PAT for cloning private dependency repos; falls back to github.token
+
+jobs:
+  # ── Run tests and collect coverage ──────────────────────────────────────────
+  unit-tests:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      pull-requests: write  # required for coverage PR comment
+      checks: write         # required for test result publishing
+      actions: write        # required for cache save in cross-repo composite actions
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      # ── 1. Full checkout — fetch-depth:0 gives blame/history for coverage ───
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── 2. .NET SDK ─────────────────────────────────────────────────────────
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      # ── 3. Resolve and build caller dependency graph ─────────────────────────
+      #       Reads dependencies.txt from the caller repo, clones + builds the
+      #       full transitive graph, and saves assemblies to deps-assemblies/.
+      - name: Resolve dependencies
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
+        with:
+          mode:           caller
+          dotnet_version: ${{ inputs.dotnet_version }}
+          configuration:  ${{ inputs.configuration }}
+          token:          ${{ secrets.GH_TOKEN }}
+
+      # ── 4. Stage built assemblies to C:\ProgramData\BHoM\Assemblies ─────────
+      #       Required so that HintPath references in .csproj files resolve at
+      #       build time (mirrors the BHoMBot PostBuildEvent xcopy convention).
+      - name: Stage assemblies
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
+        with:
+          source: deps-assemblies
+
+      # ── 5. Restore NuGet packages for the test solution ──────────────────────
+      - name: Restore test solution
+        run: dotnet restore "${{ inputs.test_solution }}"
+
+      # ── 6. Build the test solution ───────────────────────────────────────────
+      #       Builds both the engine project(s) and the test project(s) that are
+      #       included in the solution, using staged HintPath assemblies.
+      - name: Build (${{ inputs.configuration }})
+        run: dotnet build "${{ inputs.test_solution }}" --no-restore --configuration ${{ inputs.configuration }}
+
+      # ── 7. Run tests ─────────────────────────────────────────────────────────
+      #       continue-on-error:true ensures artifacts (TRX, coverage) are always
+      #       uploaded even when tests fail. The exit code is checked explicitly
+      #       at the end of the job so the job still fails when tests do.
+      - name: Run tests
+        id: test
+        continue-on-error: true
+        run: |
+          $collectArgs = if (${{ inputs.run_coverage }}) { '--collect:"XPlat Code Coverage"' } else { '' }
+
+          $expression = "dotnet test `"${{ inputs.test_solution }}`" " +
+                        "--no-build " +
+                        "--configuration ${{ inputs.configuration }} " +
+                        "--verbosity normal " +
+                        '--logger "trx;LogFileName=tests.trx" ' +
+                        "--results-directory TestResults " +
+                        $collectArgs
+
+          Invoke-Expression $expression
+          "test_exit_code=$LASTEXITCODE" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::warning::$LASTEXITCODE test(s) failed — results will be published before failing the job."
+          }
+
+      # ── 8. Upload TRX results ─────────────────────────────────────────────────
+      - name: Upload test results (TRX)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: "**/TestResults/**/*.trx"
+          if-no-files-found: warn
+
+      # ── 9. Upload raw coverage ────────────────────────────────────────────────
+      - name: Upload coverage (Cobertura XML)
+        if: inputs.run_coverage && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: "**/TestResults/**/coverage.cobertura.xml"
+          if-no-files-found: warn
+
+      # ── 10. Generate coverage report ─────────────────────────────────────────
+      - name: Install ReportGenerator
+        if: inputs.run_coverage
+        run: dotnet tool install -g dotnet-reportgenerator-globaltool
+
+      - name: Generate coverage report
+        if: inputs.run_coverage
+        run: |
+          reportgenerator `
+            -reports:"**/TestResults/**/coverage.cobertura.xml" `
+            -targetdir:"coverage-report" `
+            -reporttypes:"MarkdownSummaryGithub;Cobertura"
+
+      # ── 11. Add coverage summary to the job summary ──────────────────────────
+      - name: Add coverage to step summary
+        if: inputs.run_coverage
+        run: |
+          if (Test-Path "coverage-report/SummaryGithub.md") {
+            Get-Content "coverage-report/SummaryGithub.md" |
+              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          } else {
+            Write-Host "::warning::No coverage report generated (no Cobertura XML found)."
+          }
+
+      # ── 12. Post coverage as a sticky PR comment ──────────────────────────────
+      #        Sticky: updated in-place on each push to the PR rather than
+      #        appending a new comment, reducing noise.
+      - name: Post coverage comment
+        if: |
+          inputs.run_coverage &&
+          (github.event_name == 'pull_request' ||
+           (inputs.coverage_on_push && github.event_name == 'push'))
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: code-coverage
+          path: coverage-report/SummaryGithub.md
+
+      # ── 13. Fail the job now that artifacts have been uploaded ───────────────
+      - name: Check test outcome
+        if: always()
+        run: |
+          $code = "${{ steps.test.outputs.test_exit_code }}"
+          if ($code -ne "" -and $code -ne "0") {
+            Write-Host "::error::Unit tests failed — see the TRX results and the 'Publish Test Results' check for details."
+            exit 1
+          }
+
+
+  # ── Publish test results to GitHub Checks API ───────────────────────────────
+  #    Runs on ubuntu (cheaper runner). Runs after unit-tests even on failure
+  #    so the results always appear as a named check on the PR.
+  publish-results:
+    name: Publish Test Results
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    if: always()
+    permissions:
+      checks: write
+      pull-requests: write
+      contents: read
+
+    steps:
+      - name: Download TRX artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: test-results
+          path: test-results
+        continue-on-error: true   # artifact may not exist if tests were skipped
+
+      - name: Publish test results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          trx_files: "test-results/**/*.trx"

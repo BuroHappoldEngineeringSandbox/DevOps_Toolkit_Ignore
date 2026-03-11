@@ -35,6 +35,16 @@ inputs:
     required: false
     default: ""
 
+  additional_seeds:
+    description: |
+      Only meaningful when mode=caller. Newline-separated owner/repo[@ref] list of
+      extra seed repos to resolve and build in addition to the caller's dependencies.txt
+      graph. Useful when a job needs both the caller's own dependency assemblies AND
+      a fixed set of infrastructure repos (e.g. Test_Toolkit + Versioning_Toolkit for
+      data-driven unit tests). Ignored when mode=seeds.
+    required: false
+    default: ""
+
 runs:
   using: "composite"
 
@@ -124,7 +134,8 @@ runs:
         & $script `
           -DepsFile "${{ inputs.deps_file }}" `
           -Mode "${{ inputs.mode }}" `
-          -Seeds "${{ inputs.seeds }}"
+          -Seeds "${{ inputs.seeds }}" `
+          -AdditionalSeeds "${{ inputs.additional_seeds }}"
 
     # ------------------------------------------------------------
     # Composite cache key from dependency SHAs
