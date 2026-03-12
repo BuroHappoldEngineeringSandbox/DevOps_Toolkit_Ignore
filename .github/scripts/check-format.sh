@@ -77,9 +77,10 @@ for csproj in "${!projects[@]}"; do
       norm_path="${filepath//\\/\/}"
       rel_path="${norm_path#$norm_ws/}"
       rel_path="${rel_path#/}"
-      # Only annotate files that are in the PR (changed).
+      # Only annotate and fail for files that are in the PR (changed).
       if [[ -n "${changed_set[$rel_path]:-}" ]]; then
         echo "::error file=$rel_path::Formatting violation — run 'dotnet format' locally to fix."
+        failed=1
       fi
     done < <(python -c "
 import json, sys
