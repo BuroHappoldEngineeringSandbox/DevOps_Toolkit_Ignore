@@ -1,22 +1,29 @@
 #!/usr/bin/env bash
-# check-format.sh
+# check-format.sh [whitespace|full]
 #
-# Runs full dotnet format (whitespace + style + analyzers) in project mode
-# against every .csproj that owns a changed C# file listed in changed_cs_files.txt.
-# Requires BHoM dependency assemblies to be staged (done by the format job).
+# Runs a format check against every .csproj that owns a changed C# file
+# listed in changed_cs_files.txt. Mode:
+#   whitespace — dotnet format whitespace --folder (no deps; fast).
+#   full       — dotnet format (style + analyzers) in project mode; needs staged DLLs.
 #
-# Emits ::error file=<path>:: annotations so violations appear inline in the
-# PR diff. Exits non-zero if any project has formatting violations.
+# Emits ::error file=<path>:: for violations. Exits non-zero if any project fails.
+# Relies on: GITHUB_WORKSPACE (for relative paths in annotations).
 #
-# Relies on: GITHUB_WORKSPACE (repo root, for relative paths in annotations).
-#
-# Usage: bash .github/scripts/check-format.sh
+# Usage: bash check-format.sh [whitespace|full]
 
 set -euo pipefail
+
+mode="${1:-full}"
+if [ "$mode" != "whitespace" ] && [ "$mode" != "full" ]; then
+  echo "Usage: $0 whitespace|full" >&2
+  exit 1
+fi
 
 declare -A projects
 failed=0
 report_dir=".format-report"
+norm_ws="${GITHUB_WORKSPACE//\\/\/}"
+norm_ws="${norm_ws%/}"
 
 # Walk up the directory tree from each changed file to find its owning .csproj.
 while IFS= read -r file; do
@@ -40,8 +47,6 @@ for csproj in "${!projects[@]}"; do
   echo "::group::dotnet format — $csproj"
   proj_dir=$(dirname "$csproj")
 
-  # Build --include as an array so paths with spaces are handled correctly.
-  # Paths must be relative to the project directory, not the repo root.
   include_args=()
   while IFS= read -r f; do
     [[ -n "$f" ]] && include_args+=(--include "$f")
@@ -59,31 +64,43 @@ for csproj in "${!projects[@]}"; do
     continue
   fi
 
-  # Full dotnet format (project mode): whitespace + style + analyzers.
-  # All tiers respect .editorconfig. Workspace must load (BHoM DLLs staged by job).
-  # --report writes a JSON file into the given directory.
-  rm -rf "$report_dir"
-  mkdir -p "$report_dir"
-  format_out=$(dotnet format "$csproj" \
-    --verify-no-changes \
-    --verbosity normal \
-    --report "$report_dir" \
-    "${include_args[@]}" 2>&1) || failed=1
+  if [ "$mode" = "whitespace" ]; then
+    # Whitespace-only: --folder mode, no workspace/reference loading.
+    format_out=$(dotnet format whitespace --folder "$proj_dir" \
+      --verify-no-changes \
+      --verbosity normal \
+      "${include_args[@]}" 2>&1) || failed=1
+    echo "$format_out"
 
-  echo "$format_out"
+    # Folder mode emits: <path>(line,col): error WHITESPACE: ...
+    echo "$format_out" \
+      | grep "error WHITESPACE:" \
+      | grep -oP "^.*\.cs(?=\()" \
+      | sort -u \
+      | while IFS= read -r filepath; do
+          norm_path="${filepath//\\/\/}"
+          rel_path="${norm_path#$norm_ws/}"
+          echo "::error file=$rel_path::Whitespace violation — run 'dotnet format' locally to fix."
+        done || true
+  else
+    # Full: project mode, style + analyzers; requires staged assemblies.
+    rm -rf "$report_dir"
+    mkdir -p "$report_dir"
+    format_out=$(dotnet format "$csproj" \
+      --verify-no-changes \
+      --verbosity normal \
+      --report "$report_dir" \
+      "${include_args[@]}" 2>&1) || failed=1
+    echo "$format_out"
 
-  # Parse the JSON report for file paths; emit one ::error per file.
-  # Paths in the report are absolute; normalize and strip workspace for annotations.
-  report_file=$(find "$report_dir" -maxdepth 1 -name "*.json" 2>/dev/null | head -1)
-  if [ -n "$report_file" ] && [ -f "$report_file" ]; then
-    norm_ws="${GITHUB_WORKSPACE//\\/\/}"
-    norm_ws="${norm_ws%/}"
-    while IFS= read -r filepath; do
-      [ -z "$filepath" ] && continue
-      norm_path="${filepath//\\/\/}"
-      rel_path="${norm_path#$norm_ws/}"
-      echo "::error file=$rel_path::Formatting violation — run 'dotnet format' locally to fix."
-    done < <(python -c "
+    report_file=$(find "$report_dir" -maxdepth 1 -name "*.json" 2>/dev/null | head -1)
+    if [ -n "$report_file" ] && [ -f "$report_file" ]; then
+      while IFS= read -r filepath; do
+        [ -z "$filepath" ] && continue
+        norm_path="${filepath//\\/\/}"
+        rel_path="${norm_path#$norm_ws/}"
+        echo "::error file=$rel_path::Formatting violation — run 'dotnet format' locally to fix."
+      done < <(python -c "
 import json, sys
 try:
     with open(sys.argv[1]) as f:
@@ -94,6 +111,7 @@ try:
 except (FileNotFoundError, json.JSONDecodeError):
     pass
 " "$report_file" 2>/dev/null || true)
+    fi
   fi
 
   echo "::endgroup::"
