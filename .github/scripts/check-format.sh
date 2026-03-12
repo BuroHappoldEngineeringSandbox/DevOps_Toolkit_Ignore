@@ -77,9 +77,13 @@ for csproj in "${!projects[@]}"; do
       norm_path="${filepath//\\/\/}"
       rel_path="${norm_path#$norm_ws/}"
       rel_path="${rel_path#/}"
-      # Only annotate and fail for files that are in the PR (changed).
-      if [[ -n "${changed_set[$rel_path]:-}" ]]; then
-        echo "::error file=$rel_path::Formatting violation — run 'dotnet format' locally to fix."
+      # Report may use project-relative paths (e.g. Create/Panel.cs); changed_set is repo-relative (e.g. Acoustic_Engine/Create/Panel.cs).
+      repo_rel_path="$rel_path"
+      if [[ -z "${changed_set[$rel_path]:-}" ]] && [[ -n "$proj_dir" ]] && [[ "$proj_dir" != "." ]]; then
+        repo_rel_path="${proj_dir}/${rel_path}"
+      fi
+      if [[ -n "${changed_set[$repo_rel_path]:-}" ]]; then
+        echo "::error file=$repo_rel_path::Formatting violation — run 'dotnet format' locally to fix."
         failed=1
       fi
     done < <(python -c "
