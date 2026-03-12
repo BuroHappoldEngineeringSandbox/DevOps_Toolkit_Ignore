@@ -61,16 +61,18 @@ for csproj in "${!projects[@]}"; do
     continue
   fi
 
-  rm -rf "$report_dir"
-  mkdir -p "$report_dir"
+  # Per-project report dir so we don't overwrite (enables debug of each report).
+  proj_report_dir="${report_dir}/$(basename "$csproj" .csproj)"
+  rm -rf "$proj_report_dir"
+  mkdir -p "$proj_report_dir"
   format_out=$(dotnet format "$csproj" \
     --verify-no-changes \
     --verbosity normal \
-    --report "$report_dir" \
+    --report "$proj_report_dir" \
     "${include_args[@]}" 2>&1) || failed=1
   echo "$format_out"
 
-  report_file=$(find "$report_dir" -maxdepth 1 -name "*.json" 2>/dev/null | head -1)
+  report_file=$(find "$proj_report_dir" -maxdepth 1 -name "*.json" 2>/dev/null | head -1)
   if [ -n "$report_file" ] && [ -f "$report_file" ]; then
     while IFS= read -r filepath; do
       [ -z "$filepath" ] && continue
