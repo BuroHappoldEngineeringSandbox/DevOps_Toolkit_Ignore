@@ -1,29 +1,26 @@
 #!/usr/bin/env bash
-# check-format.sh [whitespace|full]
+# check-format.sh
 #
-# Runs a format check against every .csproj that owns a changed C# file
-# listed in changed_cs_files.txt. Mode:
-#   whitespace — dotnet format whitespace --folder (no deps; fast).
-#   full       — dotnet format (style + analyzers) in project mode; needs staged DLLs.
+# Runs dotnet format --verify-no-changes on every .csproj that owns a changed
+# C# file listed in changed_cs_files.txt. Uses --report to get violation paths,
+# then emits ::error file=<path>:: only for files that are in the PR (changed).
 #
-# Emits ::error file=<path>:: for violations. Exits non-zero if any project fails.
 # Relies on: GITHUB_WORKSPACE (for relative paths in annotations).
-#
-# Usage: bash check-format.sh [whitespace|full]
+# Usage: bash check-format.sh
 
 set -euo pipefail
-
-mode="${1:-full}"
-if [ "$mode" != "whitespace" ] && [ "$mode" != "full" ]; then
-  echo "Usage: $0 whitespace|full" >&2
-  exit 1
-fi
 
 declare -A projects
 failed=0
 report_dir=".format-report"
 norm_ws="${GITHUB_WORKSPACE//\\/\/}"
 norm_ws="${norm_ws%/}"
+
+# Build set of changed files (relative to workspace) for filtering report.
+declare -A changed_set
+while IFS= read -r f; do
+  [[ -n "$f" ]] && changed_set["$f"]=1
+done < changed_cs_files.txt
 
 # Walk up the directory tree from each changed file to find its owning .csproj.
 while IFS= read -r file; do
@@ -64,43 +61,27 @@ for csproj in "${!projects[@]}"; do
     continue
   fi
 
-  if [ "$mode" = "whitespace" ]; then
-    # Whitespace-only: --folder mode, no workspace/reference loading.
-    format_out=$(dotnet format whitespace --folder "$proj_dir" \
-      --verify-no-changes \
-      --verbosity normal \
-      "${include_args[@]}" 2>&1) || failed=1
-    echo "$format_out"
+  rm -rf "$report_dir"
+  mkdir -p "$report_dir"
+  format_out=$(dotnet format "$csproj" \
+    --verify-no-changes \
+    --verbosity normal \
+    --report "$report_dir" \
+    "${include_args[@]}" 2>&1) || failed=1
+  echo "$format_out"
 
-    # Folder mode emits: <path>(line,col): error WHITESPACE: ...
-    echo "$format_out" \
-      | grep "error WHITESPACE:" \
-      | grep -oP "^.*\.cs(?=\()" \
-      | sort -u \
-      | while IFS= read -r filepath; do
-          norm_path="${filepath//\\/\/}"
-          rel_path="${norm_path#$norm_ws/}"
-          echo "::error file=$rel_path::Whitespace violation — run 'dotnet format' locally to fix."
-        done || true
-  else
-    # Full: project mode, style + analyzers; requires staged assemblies.
-    rm -rf "$report_dir"
-    mkdir -p "$report_dir"
-    format_out=$(dotnet format "$csproj" \
-      --verify-no-changes \
-      --verbosity normal \
-      --report "$report_dir" \
-      "${include_args[@]}" 2>&1) || failed=1
-    echo "$format_out"
-
-    report_file=$(find "$report_dir" -maxdepth 1 -name "*.json" 2>/dev/null | head -1)
-    if [ -n "$report_file" ] && [ -f "$report_file" ]; then
-      while IFS= read -r filepath; do
-        [ -z "$filepath" ] && continue
-        norm_path="${filepath//\\/\/}"
-        rel_path="${norm_path#$norm_ws/}"
+  report_file=$(find "$report_dir" -maxdepth 1 -name "*.json" 2>/dev/null | head -1)
+  if [ -n "$report_file" ] && [ -f "$report_file" ]; then
+    while IFS= read -r filepath; do
+      [ -z "$filepath" ] && continue
+      norm_path="${filepath//\\/\/}"
+      rel_path="${norm_path#$norm_ws/}"
+      rel_path="${rel_path#/}"
+      # Only annotate files that are in the PR (changed).
+      if [[ -n "${changed_set[$rel_path]:-}" ]]; then
         echo "::error file=$rel_path::Formatting violation — run 'dotnet format' locally to fix."
-      done < <(python -c "
+      fi
+    done < <(python -c "
 import json, sys
 try:
     with open(sys.argv[1]) as f:
@@ -111,7 +92,6 @@ try:
 except (FileNotFoundError, json.JSONDecodeError):
     pass
 " "$report_file" 2>/dev/null || true)
-    fi
   fi
 
   echo "::endgroup::"

@@ -7,12 +7,7 @@ on:
         type: boolean
         required: false
         default: false
-        # Set to true to run the lightweight whitespace-only format check (no dependency staging).
-      run_format_style:
-        type: boolean
-        required: false
-        default: false
-        # Set to true to run style + analyzers (requires caller deps staged; slower).
+        # Set to true to run dotnet format --verify-no-changes on PR-changed C# files.
       run_compliance:
         type: boolean
         required: false
@@ -85,7 +80,9 @@ jobs:
             exit 1
           fi
 
-  # ── Format (whitespace) — lightweight, no dependency staging ───────────────
+  # ── Format check ──────────────────────────────────────────────────────────
+  # Runs dotnet format --verify-no-changes on projects that own PR-changed .cs
+  # files; emits ::error annotations so violations appear in the PR.
   format:
     if: inputs.run_format && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -117,7 +114,7 @@ jobs:
           echo "count=$count" >> $GITHUB_OUTPUT
 
           if [ "$count" -gt 0 ]; then
-            echo "::notice::$count C# file(s) changed — running whitespace format check."
+            echo "::notice::$count C# file(s) changed — running format check."
             cat changed_cs_files.txt
           else
             echo "::notice::No changed C# files — format check skipped."
@@ -131,78 +128,10 @@ jobs:
           ref: main
           path: _toolkit
 
-      - name: Check formatting (whitespace)
+      - name: Check formatting
         if: steps.changed.outputs.count != '0'
         shell: bash
-        run: bash _toolkit/.github/scripts/check-format.sh whitespace
-
-  # ── Format (style + analyzers) — full project mode, requires deps staged ────
-  format-style:
-    if: inputs.run_format_style && github.event_name == 'pull_request'
-    runs-on: windows-latest
-    permissions:
-      contents: read
-      actions: write
-
-    steps:
-      - name: Checkout caller repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ inputs.dotnet_version }}
-
-      - name: Compute changed C# files
-        id: changed
-        shell: bash
-        run: |
-          base_sha="${{ github.event.pull_request.base.sha }}"
-          git fetch --depth=1 origin "$base_sha"
-
-          git diff --name-only --diff-filter=ACMRT "$base_sha" HEAD -- '*.cs' \
-            > changed_cs_files.txt
-
-          count=$(wc -l < changed_cs_files.txt | tr -d ' ')
-          echo "count=$count" >> $GITHUB_OUTPUT
-
-          if [ "$count" -gt 0 ]; then
-            echo "::notice::$count C# file(s) changed — running style/analyzer format check."
-            cat changed_cs_files.txt
-          else
-            echo "::notice::No changed C# files — format-style check skipped."
-          fi
-
-      # - name: Resolve dependencies (caller graph)
-      #   if: steps.changed.outputs.count != '0'
-      #   uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
-      #   with:
-      #     mode:           caller
-      #     deps_file:      dependencies.txt
-      #     dotnet_version: ${{ inputs.dotnet_version }}
-      #     configuration:  ${{ inputs.configuration }}
-      #     token:          ${{ secrets.GH_TOKEN }}
-
-      # - name: Stage assemblies to ProgramData\BHoM\Assemblies
-      #   if: steps.changed.outputs.count != '0'
-      #   uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
-      #   with:
-      #     source: deps-assemblies
-
-      - name: Checkout DevOps_Toolkit (format script)
-        if: steps.changed.outputs.count != '0'
-        uses: actions/checkout@v4
-        with:
-          repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
-          ref: main
-          path: _toolkit
-
-      - name: Check formatting (style + analyzers)
-        if: steps.changed.outputs.count != '0'
-        shell: bash
-        run: bash _toolkit/.github/scripts/check-format.sh full
+        run: bash _toolkit/.github/scripts/check-format.sh
 
   # ── Compliance check ──────────────────────────────────────────────────────
   compliance:
