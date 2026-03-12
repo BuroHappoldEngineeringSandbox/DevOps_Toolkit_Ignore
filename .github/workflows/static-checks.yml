@@ -7,8 +7,8 @@ on:
         type: boolean
         required: false
         default: false
-        # Set to true only for repos that have completed the SDK format migration.
-        # dotnet format requires SDK-style .csproj files; legacy projects (packages.config) are not supported.
+        # Set to true for repos that have completed the SDK format migration and have an .editorconfig.
+        # dotnet format requires SDK-style .csproj; legacy projects (packages.config) are not supported.
       run_compliance:
         type: boolean
         required: false
@@ -18,7 +18,7 @@ on:
         type: boolean
         required: false
         default: false
-        # Set to false to skip the branch naming convention check for this repo.
+        # Set to true to enable the branch naming convention check for this repo.
       dotnet_version:
         type: string
         required: false
@@ -82,12 +82,15 @@ jobs:
           fi
 
   # ── Format check ──────────────────────────────────────────────────────────
+  # Full dotnet format (whitespace + style + analyzers) in project mode so
+  # .editorconfig rules are honoured. Requires BHoM dependency assemblies to
+  # be staged so the workspace loads; same resolve + stage as compliance job.
   format:
     if: inputs.run_format && github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     permissions:
       contents: read
-      pull-requests: read
+      actions: write   # required for cache save in resolve-dependencies
 
     steps:
       - name: Checkout caller repo
@@ -101,8 +104,6 @@ jobs:
           dotnet-version: ${{ inputs.dotnet_version }}
 
       # Fetch the PR base SHA and diff to find changed .cs files only.
-      # Uses a two-dot diff against the exact base SHA to avoid merge-base
-      # failures on shallow clones — same approach as the compliance job.
       - name: Compute changed C# files
         id: changed
         shell: bash
@@ -123,92 +124,28 @@ jobs:
             echo "::notice::No changed C# files — format check skipped."
           fi
 
-      - name: Restore NuGet packages
+      # Resolve and build the caller repo's dependency graph so project references load.
+      # dotnet format (project mode) needs those assemblies staged (e.g. BHoM DLLs).
+      - name: Resolve dependencies (caller graph)
         if: steps.changed.outputs.count != '0'
-        shell: bash
-        run: dotnet restore
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
+        with:
+          mode:           caller
+          deps_file:      dependencies.txt
+          dotnet_version: ${{ inputs.dotnet_version }}
+          configuration:  ${{ inputs.configuration }}
+          token:          ${{ secrets.GH_TOKEN }}
 
-      # Walk up the directory tree from each changed file to find its owning
-      # .csproj, then run dotnet format scoped to only the changed files in
-      # that project. Per-file ::error annotations are emitted so violations
-      # appear inline in the PR diff.
+      - name: Stage assemblies to ProgramData\BHoM\Assemblies
+        if: steps.changed.outputs.count != '0'
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
+        with:
+          source: deps-assemblies
+
       - name: Check formatting
         if: steps.changed.outputs.count != '0'
         shell: bash
-        run: |
-          declare -A projects
-          failed=0
-
-          while IFS= read -r file; do
-            dir=$(dirname "$file")
-            while [[ "$dir" != "." && "$dir" != "/" ]]; do
-              csproj=$(find "$dir" -maxdepth 1 -name "*.csproj" | head -1)
-              if [ -n "$csproj" ]; then
-                projects["$csproj"]=1
-                break
-              fi
-              dir=$(dirname "$dir")
-            done
-          done < changed_cs_files.txt
-
-          if [ ${#projects[@]} -eq 0 ]; then
-            echo "::notice::No .csproj found for any changed file — format check skipped."
-            exit 0
-          fi
-
-          for csproj in "${!projects[@]}"; do
-            echo "::group::dotnet format — $csproj"
-            proj_dir=$(dirname "$csproj")
-
-            # Build --include as an array so paths with spaces are handled correctly.
-            include_args=()
-            while IFS= read -r f; do
-              [[ -n "$f" ]] && include_args+=(--include "$f")
-            done < <(
-              if [ "$proj_dir" = "." ]; then
-                cat changed_cs_files.txt
-              else
-                grep "^${proj_dir}/" changed_cs_files.txt | sed "s|^${proj_dir}/||"
-              fi
-            )
-
-            if [ ${#include_args[@]} -eq 0 ]; then
-              echo "No changed files belong to this project — skipping."
-              echo "::endgroup::"
-              continue
-            fi
-
-            # --folder mode bypasses workspace/reference loading entirely so the
-            # check works even when project DLL references are not restored locally
-            # or in environments where only the SDK is available. Only whitespace
-            # rules from .editorconfig are enforced (indent_style, indent_size, etc).
-            format_out=$(dotnet format whitespace --folder "$proj_dir" \
-              --verify-no-changes \
-              --verbosity normal \
-              "${include_args[@]}" 2>&1) || failed=1
-
-            echo "$format_out"
-
-            # Folder mode emits violations as: <abs-path>(line,col): error WHITESPACE: ...
-            # Extract the file path, deduplicate per-file, strip workspace prefix,
-            # and emit one ::error annotation per file so it appears in the PR diff.
-            echo "$format_out" \
-              | grep "error WHITESPACE:" \
-              | grep -oP "^.*\.cs(?=\()" \
-              | sort -u \
-              | while IFS= read -r filepath; do
-                  rel_path="${filepath#$GITHUB_WORKSPACE/}"
-                  echo "::error file=$rel_path::Formatting violation — run 'dotnet format' locally to fix."
-                done || true
-
-            echo "::endgroup::"
-          done
-
-          if [ $failed -ne 0 ]; then
-            echo "::error::One or more files have formatting violations. Run 'dotnet format' locally to fix."
-          fi
-
-          exit $failed
+        run: bash .github/scripts/check-format.sh
 
   # ── Compliance check ──────────────────────────────────────────────────────
   compliance:
