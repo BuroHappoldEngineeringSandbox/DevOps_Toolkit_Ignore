@@ -133,6 +133,33 @@ jobs:
         shell: bash
         run: bash _toolkit/.github/scripts/check-format.sh
 
+      - name: Debug — changed files and format report
+        if: steps.changed.outputs.count != '0'
+        shell: bash
+        run: |
+          echo "=== changed_cs_files.txt ==="
+          cat changed_cs_files.txt
+          echo ""
+          REPORT=".format-report/format-report.json"
+          if [ -f "$REPORT" ]; then
+            echo "=== FilePath entries in $REPORT (last project in loop) ==="
+            python3 -c "
+          import json, sys
+          try:
+              with open(sys.argv[1]) as f:
+                  data = json.load(f)
+              for item in data:
+                  if isinstance(item, dict) and 'FilePath' in item:
+                      print(item['FilePath'])
+              if not data:
+                  print('(empty array)')
+          except Exception as e:
+              print('Error:', e)
+          " "$REPORT" || true
+          else
+            echo "No report file found at $REPORT"
+          fi
+
   # ── Compliance check ──────────────────────────────────────────────────────
   compliance:
     if: inputs.run_compliance
