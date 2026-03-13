@@ -16,7 +16,7 @@ on:
       test_solution:
         type: string
         required: false
-        default: ".ci/tests/UnitTests/UnitTests.slnx"
+        default: ".ci/tests/UnitTests/UnitTests.sln"
         # Path to the test solution relative to the repo root.
         # Both .sln and .slnx formats are supported (requires .NET 9+ SDK).
       run_coverage:
@@ -132,36 +132,50 @@ jobs:
           path: "**/TestResults/**/coverage.cobertura.xml"
           if-no-files-found: warn
 
-      # ── 10. Generate coverage report ─────────────────────────────────────────
+      # ── 10. Check whether coverage files exist (avoid failing when none) ───────
+      - name: Check for coverage files
+        id: coverage-check
+        if: inputs.run_coverage && always()
+        run: |
+          $files = Get-ChildItem -Path . -Recurse -Filter "coverage.cobertura.xml" -ErrorAction SilentlyContinue
+          if ($files) {
+            "coverage_found=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "Found $($files.Count) coverage file(s)."
+          } else {
+            "coverage_found=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "::warning::No coverage.cobertura.xml found — coverage report steps will be skipped. Add a Cobertura reporter to test projects to enable."
+          }
+
+      # ── 11. Generate coverage report (only when Cobertura XML exists) ───────────
       - name: Install ReportGenerator
-        if: inputs.run_coverage
+        if: steps.coverage-check.outputs.coverage_found == 'true'
         run: dotnet tool install -g dotnet-reportgenerator-globaltool
 
       - name: Generate coverage report
-        if: inputs.run_coverage
+        if: steps.coverage-check.outputs.coverage_found == 'true'
         run: |
           reportgenerator `
             -reports:"**/TestResults/**/coverage.cobertura.xml" `
             -targetdir:"coverage-report" `
             -reporttypes:"MarkdownSummaryGithub;Cobertura"
 
-      # ── 11. Add coverage summary to the job summary ──────────────────────────
+      # ── 12. Add coverage summary to the job summary ──────────────────────────
       - name: Add coverage to step summary
-        if: inputs.run_coverage
+        if: inputs.run_coverage && always()
         run: |
           if (Test-Path "coverage-report/SummaryGithub.md") {
             Get-Content "coverage-report/SummaryGithub.md" |
               Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           } else {
-            Write-Host "::warning::No coverage report generated (no Cobertura XML found)."
+            Write-Host "::notice::No coverage report (Cobertura XML not produced by test projects)."
           }
 
-      # ── 12. Post coverage as a sticky PR comment ──────────────────────────────
+      # ── 13. Post coverage as a sticky PR comment ──────────────────────────────
       #        Sticky: updated in-place on each push to the PR rather than
       #        appending a new comment, reducing noise.
       - name: Post coverage comment
         if: |
-          inputs.run_coverage &&
+          steps.coverage-check.outputs.coverage_found == 'true' &&
           (github.event_name == 'pull_request' ||
            (inputs.coverage_on_push && github.event_name == 'push'))
         uses: marocchino/sticky-pull-request-comment@v2
@@ -169,7 +183,7 @@ jobs:
           header: code-coverage
           path: coverage-report/SummaryGithub.md
 
-      # ── 13. Fail the job now that artifacts have been uploaded ───────────────
+      # ── 14. Fail the job now that artifacts have been uploaded ───────────────
       - name: Check test outcome
         if: always()
         run: |
