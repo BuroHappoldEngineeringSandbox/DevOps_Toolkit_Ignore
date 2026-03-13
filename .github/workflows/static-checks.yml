@@ -194,12 +194,11 @@ jobs:
           fi
 
           # Run format per project for changed files whose project is NOT in the solution (e.g. .ci test projects).
+          # Use repo-relative paths for --include so dotnet format actually checks the files and reports violations.
           for csproj in "${!outside_solution[@]}"; do
-            proj_dir=$(dirname "$csproj")
             include_args=()
             for f in ${outside_solution[$csproj]}; do
-              if [[ "$proj_dir" == "." ]]; then rel="$f"; else rel="${f#$proj_dir/}"; fi
-              [[ -n "$rel" ]] && include_args+=(--include "$rel")
+              [[ -n "$f" ]] && include_args+=(--include "$f")
             done
             [[ ${#include_args[@]} -eq 0 ]] && continue
             echo "::group::dotnet format — $csproj (outside solution)"
