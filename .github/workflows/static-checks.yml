@@ -150,11 +150,13 @@ jobs:
 
           # Discover solution(s) and which .csproj paths are in them (normalize to forward slashes).
           solution_projects=()
-          for sln in *.sln 2>/dev/null; do
+          for sln in *.sln; do
             [ -f "$sln" ] || continue
+            grep -oE '"[^"]*\.csproj"' "$sln" | tr -d '"' | sed 's|\\|/|g' | sort -u > _sln_projects.txt
             while IFS= read -r p; do
-              [[ -n "$p" ]] && solution_projects+=("$p")
-            done < <(grep -oE '"[^"]*\.csproj"' "$sln" 2>/dev/null | tr -d '"' | sed 's|\\|/|g' | sort -u)
+              [ -n "$p" ] && solution_projects+=("$p")
+            done < _sln_projects.txt
+            rm -f _sln_projects.txt
             break
           done
 
