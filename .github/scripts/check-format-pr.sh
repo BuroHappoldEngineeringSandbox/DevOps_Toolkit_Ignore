@@ -76,7 +76,7 @@ if [ ${#solution_include[@]} -gt 0 ] && [ ${#solution_projects[@]} -gt 0 ]; then
     for f in "${solution_include[@]}"; do include_args+=(--include "$f"); done
     echo "::group::dotnet format — $sln (solution; changed files in solution projects)"
     set +e
-    dotnet format "$sln" --verify-no-changes --verbosity normal "${include_args[@]}"
+    dotnet format "$sln" --verify-no-changes --verbosity diagnostic "${include_args[@]}"
     exitcode=$?
     set -e
     echo "::endgroup::"
@@ -94,7 +94,7 @@ for csproj in "${!outside_solution[@]}"; do
   [ ${#include_args[@]} -eq 0 ] && continue
   echo "::group::dotnet format — $csproj (outside solution)"
   set +e
-  dotnet format "$csproj" --verify-no-changes --verbosity normal "${include_args[@]}"
+  dotnet format "$csproj" --verify-no-changes --verbosity diagnostic "${include_args[@]}"
   exitcode=$?
   set -e
   echo "::endgroup::"
