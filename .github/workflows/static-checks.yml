@@ -204,7 +204,7 @@ jobs:
             [[ ${#include_args[@]} -eq 0 ]] && continue
             echo "::group::dotnet format — $csproj (outside solution)"
             set +e
-            dotnet format "$csproj" --verify-no-changes --verbosity detailed "${include_args[@]}"
+            dotnet format "$csproj" --verify-no-changes --verbosity normal "${include_args[@]}"
             exitcode=$?
             set -e
             echo "::endgroup::"
