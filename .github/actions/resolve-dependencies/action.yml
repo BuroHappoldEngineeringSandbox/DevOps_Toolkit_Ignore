@@ -216,13 +216,3 @@ runs:
           ~\AppData\Local\Microsoft\MSBuild\Cache
         key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj','**/global.json','**/nuget.config') }}
 
-    # ------------------------------------------------------------
-    # Upload assemblies
-    # ------------------------------------------------------------
-    - name: Upload dependency assemblies
-      uses: actions/upload-artifact@v4
-      with:
-        name: deps-assemblies
-        path: deps-assemblies/**
-        retention-days: 7
-        if-no-files-found: warn

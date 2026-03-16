@@ -49,6 +49,7 @@ jobs:
   branch:
     if: inputs.run_branch_check && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
 
@@ -86,6 +87,7 @@ jobs:
   format:
     if: inputs.run_format && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
 
@@ -137,6 +139,7 @@ jobs:
   compliance:
     if: inputs.run_compliance
     runs-on: windows-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: read
@@ -298,6 +301,7 @@ jobs:
   dataset:
     if: inputs.run_dataset_check
     runs-on: windows-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: read

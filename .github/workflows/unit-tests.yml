@@ -38,6 +38,7 @@ jobs:
   # ── Run tests and collect coverage ──────────────────────────────────────────
   unit-tests:
     runs-on: windows-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: write  # required for coverage PR comment
@@ -48,19 +49,17 @@ jobs:
         shell: pwsh
 
     steps:
-      # ── 1. Full checkout — fetch-depth:0 gives blame/history for coverage ───
+      # ── 1. Checkout ───────────────────────────────────────────────────────────
+      #       fetch-depth:1 is sufficient — ReportGenerator only needs the
+      #       Cobertura XML, not git history.
       - name: Checkout caller repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
-      # ── 2. .NET SDK ─────────────────────────────────────────────────────────
-      - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ inputs.dotnet_version }}
-
-      # ── 3. Resolve and build caller dependency graph ─────────────────────────
+      # ── 2. Resolve and build caller dependency graph ─────────────────────────
+      #       resolve-dependencies sets up .NET SDK, MSBuild, and NuGet CLI
+      #       internally — no separate setup-dotnet step is needed here.
       #       Reads dependencies.txt from the caller repo, clones + builds the
       #       full transitive graph, and saves assemblies to deps-assemblies/.
       - name: Resolve dependencies
@@ -71,7 +70,7 @@ jobs:
           configuration:  ${{ inputs.configuration }}
           token:          ${{ secrets.GH_TOKEN }}
 
-      # ── 4. Stage built assemblies to C:\ProgramData\BHoM\Assemblies ─────────
+      # ── 3. Stage built assemblies to C:\ProgramData\BHoM\Assemblies ─────────
       #       Required so that HintPath references in .csproj files resolve at
       #       build time (mirrors the BHoMBot PostBuildEvent xcopy convention).
       - name: Stage assemblies
@@ -79,17 +78,17 @@ jobs:
         with:
           source: deps-assemblies
 
-      # ── 5. Restore NuGet packages for the test solution ──────────────────────
+      # ── 4. Restore NuGet packages for the test solution ──────────────────────
       - name: Restore test solution
         run: dotnet restore "${{ inputs.test_solution }}"
 
-      # ── 6. Build the test solution ───────────────────────────────────────────
+      # ── 5. Build the test solution ───────────────────────────────────────────
       #       Builds both the engine project(s) and the test project(s) that are
       #       included in the solution, using staged HintPath assemblies.
       - name: Build (${{ inputs.configuration }})
         run: dotnet build "${{ inputs.test_solution }}" --no-restore --configuration ${{ inputs.configuration }}
 
-      # ── 7. Run tests ─────────────────────────────────────────────────────────
+      # ── 6. Run tests ─────────────────────────────────────────────────────────
       #       continue-on-error:true ensures artifacts (TRX, coverage) are always
       #       uploaded even when tests fail. The exit code is checked explicitly
       #       at the end of the job so the job still fails when tests do.
@@ -114,7 +113,7 @@ jobs:
             Write-Host "::warning::$LASTEXITCODE test(s) failed — results will be published before failing the job."
           }
 
-      # ── 8. Upload TRX results ─────────────────────────────────────────────────
+      # ── 7. Upload TRX results ─────────────────────────────────────────────────
       - name: Upload test results (TRX)
         if: always()
         uses: actions/upload-artifact@v4
@@ -123,7 +122,7 @@ jobs:
           path: "**/TestResults/**/*.trx"
           if-no-files-found: warn
 
-      # ── 9. Upload raw coverage ────────────────────────────────────────────────
+      # ── 8. Upload raw coverage ────────────────────────────────────────────────
       - name: Upload coverage (Cobertura XML)
         if: inputs.run_coverage && always()
         uses: actions/upload-artifact@v4
@@ -132,7 +131,7 @@ jobs:
           path: "**/TestResults/**/coverage.cobertura.xml"
           if-no-files-found: warn
 
-      # ── 10. Check whether coverage files exist (avoid failing when none) ───────
+      # ── 9. Check whether coverage files exist (avoid failing when none) ───────
       - name: Check for coverage files
         id: coverage-check
         if: inputs.run_coverage && always()
@@ -146,7 +145,7 @@ jobs:
             Write-Host "::warning::No coverage.cobertura.xml found — coverage report steps will be skipped. Add a Cobertura reporter to test projects to enable."
           }
 
-      # ── 11. Generate coverage report (only when Cobertura XML exists) ───────────
+      # ── 10. Generate coverage report (only when Cobertura XML exists) ──────────
       - name: Install ReportGenerator
         if: steps.coverage-check.outputs.coverage_found == 'true'
         run: dotnet tool install -g dotnet-reportgenerator-globaltool
@@ -159,7 +158,7 @@ jobs:
             -targetdir:"coverage-report" `
             -reporttypes:"MarkdownSummaryGithub;Cobertura"
 
-      # ── 12. Add coverage summary to the job summary ──────────────────────────
+      # ── 11. Add coverage summary to the job summary ──────────────────────────
       - name: Add coverage to step summary
         if: inputs.run_coverage && always()
         run: |
@@ -170,7 +169,7 @@ jobs:
             Write-Host "::notice::No coverage report (Cobertura XML not produced by test projects)."
           }
 
-      # ── 13. Post coverage as a sticky PR comment ──────────────────────────────
+      # ── 12. Post coverage as a sticky PR comment ──────────────────────────────
       #        Sticky: updated in-place on each push to the PR rather than
       #        appending a new comment, reducing noise.
       - name: Post coverage comment
@@ -183,7 +182,7 @@ jobs:
           header: code-coverage
           path: coverage-report/SummaryGithub.md
 
-      # ── 14. Fail the job now that artifacts have been uploaded ───────────────
+      # ── 13. Fail the job now that artifacts have been uploaded ───────────────
       - name: Check test outcome
         if: always()
         run: |
@@ -200,6 +199,7 @@ jobs:
   publish-results:
     name: Publish Test Results
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: unit-tests
     if: always()
     permissions:
