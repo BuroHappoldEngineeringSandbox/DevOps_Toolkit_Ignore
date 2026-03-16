@@ -18,7 +18,6 @@ on:
         required: false
         default: ".ci/tests/UnitTests/UnitTests.sln"
         # Path to the test solution relative to the repo root.
-        # Both .sln and .slnx formats are supported (requires .NET 9+ SDK).
       run_coverage:
         type: boolean
         required: false
