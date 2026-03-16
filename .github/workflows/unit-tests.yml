@@ -92,11 +92,24 @@ jobs:
       #       continue-on-error:true ensures artifacts (TRX, coverage) are always
       #       uploaded even when tests fail. The exit code is checked explicitly
       #       at the end of the job so the job still fails when tests do.
+      #
+      #       A .runsettings file alongside the test solution is auto-detected and
+      #       used if present. This is required for coverlet to output Cobertura XML
+      #       (the default collector format without .runsettings is not Cobertura).
       - name: Run tests
         id: test
         continue-on-error: true
         run: |
           $collectArgs = if (${{ inputs.run_coverage }}) { '--collect:"XPlat Code Coverage"' } else { '' }
+
+          # Auto-detect a .runsettings file next to the test solution.
+          $solutionDir  = Split-Path "${{ inputs.test_solution }}"
+          $runsettings  = Join-Path $solutionDir ".runsettings"
+          $settingsArg  = if (Test-Path $runsettings) { "--settings `"$runsettings`"" } else { "" }
+
+          if ($settingsArg) {
+            Write-Host "::notice::Using runsettings: $runsettings"
+          }
 
           $expression = "dotnet test `"${{ inputs.test_solution }}`" " +
                         "--no-build " +
@@ -104,7 +117,8 @@ jobs:
                         "--verbosity normal " +
                         '--logger "trx;LogFileName=tests.trx" ' +
                         "--results-directory TestResults " +
-                        $collectArgs
+                        $collectArgs + " " +
+                        $settingsArg
 
           Invoke-Expression $expression
           "test_exit_code=$LASTEXITCODE" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
