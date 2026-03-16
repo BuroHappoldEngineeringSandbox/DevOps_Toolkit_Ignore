@@ -28,6 +28,14 @@ inputs:
     required: false
     default: "runner"
 
+  dotnet_version:
+    description: |
+      .NET SDK version used to publish the runner binary.
+      Must be >= the TargetFramework of the runner project.
+      Defaults to 10.x to match ComplianceRunner (Roslyn 5.0 requires net10.0).
+    required: false
+    default: "10.x"
+
 outputs:
   runner_exe:
     description: "Absolute path to the published runner executable."
@@ -38,12 +46,14 @@ runs:
 
   steps:
     # ------------------------------------------------------------
-    # NOTE: this action calls `dotnet publish` and therefore requires the .NET
-    # SDK to be available in PATH. Callers must ensure dotnet is set up before
-    # invoking this action — either via actions/setup-dotnet or by calling
-    # resolve-dependencies (which sets up dotnet internally) earlier in the job.
-    # On windows-latest runners, a pre-installed SDK is present as a fallback,
-    # but relying on it risks version mismatches.
+    # Ensure the correct .NET SDK version is available for publish.
+    # This makes the action self-sufficient — callers do not need
+    # to set up dotnet before invoking it.
+    # ------------------------------------------------------------
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet_version }}
 
     # Checkout DevOps_Toolkit into a stable subdirectory.
     # A fixed path (_prepare-runner-toolkit) avoids collisions if
