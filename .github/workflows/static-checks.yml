@@ -211,57 +211,25 @@ jobs:
         with:
           source: deps-assemblies
 
-      # ── 5. Check out DevOps_Toolkit — also captures its HEAD SHA for the ──
-      #       runner binary cache key so we only rebuild when source changes.
-      - name: Checkout DevOps_Toolkit (runner source)
+      # ── 5. Prepare ComplianceRunner ───────────────────────────────────────
+      #       Checks out DevOps_Toolkit, restores or builds the runner binary
+      #       with SHA-keyed caching, and outputs the exe path.
+      - name: Prepare ComplianceRunner
         if: steps.changed.outputs.count != '0'
-        uses: actions/checkout@v4
+        id: runner
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/prepare-runner@main
         with:
-          repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
-          ref: main
-          path: _toolkit
+          runner_project: src/ComplianceRunner/ComplianceRunner.csproj
+          output_dir:     out\runner
+          configuration:  ${{ inputs.configuration }}
+          cache_prefix:   compliance-runner
 
-      - name: Get DevOps_Toolkit HEAD SHA (runner cache key)
-        if: steps.changed.outputs.count != '0'
-        id: toolkit-sha
-        run: |
-          $sha = git -C _toolkit rev-parse HEAD
-          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "DevOps_Toolkit SHA: $sha"
-
-      # ── 6. Restore ComplianceRunner binary from cache ─────────────────────
-      #       Cache key = runner OS + toolkit SHA + build configuration.
-      #       A cache hit skips the dotnet publish entirely (~30–60 s saved).
-      - name: Restore ComplianceRunner cache
-        if: steps.changed.outputs.count != '0'
-        id: runner-cache
-        uses: actions/cache@v4
-        with:
-          path: out\runner
-          key: runner-${{ runner.os }}-${{ steps.toolkit-sha.outputs.sha }}-${{ inputs.configuration }}
-
-      # ── 7. Publish ComplianceRunner (only on cache miss) ──────────────────
-      - name: Publish ComplianceRunner
-        if: steps.changed.outputs.count != '0' && steps.runner-cache.outputs.cache-hit != 'true'
-        run: |
-          $proj = "_toolkit\src\ComplianceRunner\ComplianceRunner.csproj"
-          if (-not (Test-Path $proj)) {
-            Write-Error "ComplianceRunner project not found at: $proj"
-            exit 1
-          }
-          dotnet publish $proj -c ${{ inputs.configuration }} -o out\runner
-
-      # ── 8. Run each requested compliance check in its own log group ───────
+      # ── 6. Run each requested compliance check in its own log group ───────
       - name: Run compliance checks
         id: run_checks
         if: steps.changed.outputs.count != '0'
         run: |
-          $runner = "out\runner\ComplianceRunner.exe"
-          if (-not (Test-Path $runner)) {
-            Get-ChildItem -Recurse out\runner | Select-Object FullName
-            Write-Error "Runner executable not found at: $runner"
-            exit 1
-          }
+          $runner = "${{ steps.runner.outputs.runner_exe }}"
 
           # @() ensures a [string[]] even when only one file changed —
           # prevents PowerShell splatting the string character-by-character.
@@ -314,7 +282,7 @@ jobs:
             exit 1
           }
 
-      # ── 9. Upload SARIF results to GitHub Code Scanning ───────────────────
+      # ── 7. Upload SARIF results to GitHub Code Scanning ───────────────────
       - name: Upload SARIF
         if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && always()
         uses: github/codeql-action/upload-sarif@v4
@@ -397,54 +365,25 @@ jobs:
         with:
           source: deps-assemblies
 
-      # ── 5. Check out DevOps_Toolkit — captures HEAD SHA for cache key ─────
-      - name: Checkout DevOps_Toolkit (runner source)
+      # ── 5. Prepare DatasetComplianceRunner ────────────────────────────────
+      #       Checks out DevOps_Toolkit, restores or builds the runner binary
+      #       with SHA-keyed caching, and outputs the exe path.
+      - name: Prepare DatasetComplianceRunner
         if: steps.changed.outputs.count != '0'
-        uses: actions/checkout@v4
+        id: runner
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/prepare-runner@main
         with:
-          repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
-          ref: main
-          path: _toolkit
+          runner_project: src/DatasetComplianceRunner/DatasetComplianceRunner.csproj
+          output_dir:     out\dataset-runner
+          configuration:  ${{ inputs.configuration }}
+          cache_prefix:   dataset-runner
 
-      - name: Get DevOps_Toolkit HEAD SHA (runner cache key)
-        if: steps.changed.outputs.count != '0'
-        id: toolkit-sha
-        run: |
-          $sha = git -C _toolkit rev-parse HEAD
-          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "DevOps_Toolkit SHA: $sha"
-
-      # ── 6. Restore DatasetComplianceRunner binary from cache ──────────────
-      - name: Restore DatasetComplianceRunner cache
-        if: steps.changed.outputs.count != '0'
-        id: runner-cache
-        uses: actions/cache@v4
-        with:
-          path: out\dataset-runner
-          key: dataset-runner-${{ runner.os }}-${{ steps.toolkit-sha.outputs.sha }}-${{ inputs.configuration }}
-
-      # ── 7. Publish DatasetComplianceRunner (only on cache miss) ───────────
-      - name: Publish DatasetComplianceRunner
-        if: steps.changed.outputs.count != '0' && steps.runner-cache.outputs.cache-hit != 'true'
-        run: |
-          $proj = "_toolkit\src\DatasetComplianceRunner\DatasetComplianceRunner.csproj"
-          if (-not (Test-Path $proj)) {
-            Write-Error "DatasetComplianceRunner project not found at: $proj"
-            exit 1
-          }
-          dotnet publish $proj -c ${{ inputs.configuration }} -o out\dataset-runner
-
-      # ── 8. Run dataset compliance ─────────────────────────────────────────
+      # ── 6. Run dataset compliance ─────────────────────────────────────────
       - name: Run dataset compliance
         id: run_checks
         if: steps.changed.outputs.count != '0'
         run: |
-          $runner = "out\dataset-runner\DatasetComplianceRunner.exe"
-          if (-not (Test-Path $runner)) {
-            Get-ChildItem -Recurse out\dataset-runner | Select-Object FullName
-            Write-Error "Runner executable not found at: $runner"
-            exit 1
-          }
+          $runner = "${{ steps.runner.outputs.runner_exe }}"
 
           $fileList = @(Get-Content changed_dataset_files.txt | ForEach-Object { $_ -replace '/', '\' })
 
@@ -478,7 +417,7 @@ jobs:
             exit 1
           }
 
-      # ── 9. Upload SARIF results to GitHub Code Scanning ───────────────────
+      # ── 7. Upload SARIF results to GitHub Code Scanning ───────────────────
       - name: Upload SARIF
         if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && always()
         uses: github/codeql-action/upload-sarif@v4

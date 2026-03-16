@@ -1,0 +1,123 @@
+name: "Prepare BHoM Runner"
+description: |
+  Checks out DevOps_Toolkit, then restores or builds a runner binary
+  (e.g. ComplianceRunner, DatasetComplianceRunner) with SHA-keyed caching.
+  Returns the path to the published executable.
+
+inputs:
+  runner_project:
+    description: |
+      Path within DevOps_Toolkit to the runner .csproj.
+      Example: src/ComplianceRunner/ComplianceRunner.csproj
+    required: true
+
+  output_dir:
+    description: "Output directory for the published binary (e.g. out\\runner)"
+    required: true
+
+  configuration:
+    description: "Build configuration (Release/Debug)"
+    required: false
+    default: "Release"
+
+  cache_prefix:
+    description: |
+      Prefix for the cache key — use a unique value per runner type to prevent
+      key collisions when multiple runners are prepared in the same job.
+      Example: compliance-runner, dataset-runner
+    required: false
+    default: "runner"
+
+outputs:
+  runner_exe:
+    description: "Absolute path to the published runner executable."
+    value: ${{ steps.exe-path.outputs.path }}
+
+runs:
+  using: "composite"
+
+  steps:
+    # ------------------------------------------------------------
+    # Checkout DevOps_Toolkit into a stable subdirectory.
+    # A fixed path (_prepare-runner-toolkit) avoids collisions if
+    # this action is used more than once in the same job.
+    # ------------------------------------------------------------
+    - name: Checkout DevOps_Toolkit (runner source)
+      uses: actions/checkout@v4
+      with:
+        repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
+        ref: main
+        path: _prepare-runner-toolkit
+
+    # ------------------------------------------------------------
+    # Capture the HEAD SHA — used as the cache key so the binary
+    # is only rebuilt when DevOps_Toolkit source actually changes.
+    # ------------------------------------------------------------
+    - name: Get DevOps_Toolkit HEAD SHA
+      id: sha
+      shell: pwsh
+      run: |
+        $sha = git -C _prepare-runner-toolkit rev-parse HEAD
+        "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        Write-Host "DevOps_Toolkit SHA: $sha"
+
+    # ------------------------------------------------------------
+    # Restore runner binary from cache.
+    # actions/cache/restore@v4 is used (not actions/cache@v4) because
+    # the post-step auto-save of actions/cache@v4 does not fire inside
+    # cross-repo composite actions — saves must be explicit inline steps.
+    # ------------------------------------------------------------
+    - name: Restore runner cache
+      id: cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ inputs.output_dir }}
+        key: ${{ inputs.cache_prefix }}-${{ runner.os }}-${{ steps.sha.outputs.sha }}-${{ inputs.configuration }}
+
+    # ------------------------------------------------------------
+    # Publish the runner (only when no usable cache was found).
+    # ------------------------------------------------------------
+    - name: Publish runner (cache miss)
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        $proj = Join-Path "_prepare-runner-toolkit" "${{ inputs.runner_project }}"
+        if (-not (Test-Path $proj)) {
+          Write-Error "Runner project not found at: $proj"
+          exit 1
+        }
+        dotnet publish $proj -c ${{ inputs.configuration }} -o "${{ inputs.output_dir }}"
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "dotnet publish failed for $proj"
+          exit $LASTEXITCODE
+        }
+
+    # ------------------------------------------------------------
+    # Save the freshly-built binary to cache.
+    # Explicit inline save — see note on restore step above.
+    # ------------------------------------------------------------
+    - name: Save runner cache
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ inputs.output_dir }}
+        key: ${{ inputs.cache_prefix }}-${{ runner.os }}-${{ steps.sha.outputs.sha }}-${{ inputs.configuration }}
+
+    # ------------------------------------------------------------
+    # Derive the exe path from the project filename and validate it.
+    # ------------------------------------------------------------
+    - name: Resolve runner exe path
+      id: exe-path
+      shell: pwsh
+      run: |
+        $projName = [IO.Path]::GetFileNameWithoutExtension("${{ inputs.runner_project }}")
+        $exePath  = Join-Path "${{ inputs.output_dir }}" "$projName.exe"
+        "path=$exePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        Write-Host "Runner exe: $exePath"
+        if (-not (Test-Path $exePath)) {
+          Write-Host "Contents of ${{ inputs.output_dir }}:"
+          Get-ChildItem "${{ inputs.output_dir }}" -ErrorAction SilentlyContinue |
+            Select-Object FullName
+          Write-Error "Runner executable not found at expected path: $exePath"
+          exit 1
+        }

@@ -1,0 +1,172 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      dotnet_version:
+        type: string
+        required: false
+        default: "8.x"
+        # .NET SDK version for SDK-style projects. Legacy .NET Framework projects
+        # use MSBuild (set up by resolve-dependencies) regardless of this value.
+      configuration:
+        type: string
+        required: false
+        default: "Release"
+    secrets:
+      GH_TOKEN:
+        required: false   # PAT for cloning private dependency repositories; falls back to github.token
+
+jobs:
+  # ── Build the caller repository ───────────────────────────────────────────────
+  #    1. Resolves and builds the full transitive dependency graph (dependencies.txt).
+  #    2. Builds the caller repo's primary solution in the requested configuration.
+  #    3. Builds any alternate configurations declared in altConfigs.txt.
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      actions: write   # required for cache save in cross-repo composite actions
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      # ── 1. Checkout ───────────────────────────────────────────────────────────
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ── 2. Resolve and build caller dependency graph ──────────────────────────
+      #       Reads dependencies.txt, clones + builds the full transitive graph,
+      #       caches the resulting assemblies, and uploads them as deps-assemblies/.
+      - name: Resolve dependencies
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
+        with:
+          mode:           caller
+          dotnet_version: ${{ inputs.dotnet_version }}
+          configuration:  ${{ inputs.configuration }}
+          token:          ${{ secrets.GH_TOKEN }}
+
+      # ── 3. Stage dependency assemblies ────────────────────────────────────────
+      #       Copies DLLs to C:\ProgramData\BHoM\Assemblies so that HintPath
+      #       references in the primary solution's .csproj files resolve at build time.
+      - name: Stage assemblies
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
+        with:
+          source: deps-assemblies
+
+      # ── 4. Discover primary solution ──────────────────────────────────────────
+      #       Prefers <RepoName>.sln at the root (BHoM convention); falls back to
+      #       any .sln found recursively. Also detects legacy packages.config usage
+      #       to decide between NuGet+MSBuild and dotnet build.
+      - name: Discover primary solution
+        id: solution
+        run: |
+          $repoName = "${{ github.event.repository.name }}"
+          $rootSln  = Join-Path (Get-Location) "$repoName.sln"
+
+          if (Test-Path $rootSln) {
+            $slnPath = $rootSln
+          } else {
+            $found = Get-ChildItem . -Filter *.sln -ErrorAction SilentlyContinue |
+                     Select-Object -First 1
+            if (-not $found) {
+              Write-Host "::error title=Build::No .sln file found in repository '$repoName'."
+              exit 1
+            }
+            $slnPath = $found.FullName
+          }
+
+          $isLegacy = (Get-ChildItem . -Recurse -Filter packages.config `
+                        -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
+
+          "path=$slnPath"                           | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "is_legacy=$($isLegacy.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          Write-Host "::notice title=Solution::$slnPath (legacy=$isLegacy)"
+
+      # ── 5. Build primary solution ──────────────────────────────────────────────
+      #       Legacy projects (packages.config detected) use NuGet restore + MSBuild.
+      #       SDK-style projects use dotnet restore + dotnet build.
+      - name: Build (${{ inputs.configuration }})
+        id: primary-build
+        run: |
+          $slnPath  = "${{ steps.solution.outputs.path }}"
+          $isLegacy = "${{ steps.solution.outputs.is_legacy }}" -eq "true"
+          $config   = "${{ inputs.configuration }}"
+
+          if ($isLegacy) {
+            Write-Host "::group::NuGet restore"
+            nuget restore $slnPath -NonInteractive
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host "::endgroup::"
+
+            Write-Host "::group::MSBuild $config"
+            msbuild $slnPath /m /p:Configuration=$config /p:Platform="Any CPU" /verbosity:minimal /nologo
+            Write-Host "::endgroup::"
+          } else {
+            Write-Host "::group::dotnet restore"
+            dotnet restore $slnPath
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host "::endgroup::"
+
+            Write-Host "::group::dotnet build $config"
+            dotnet build $slnPath --no-restore --configuration $config --nologo -m
+            Write-Host "::endgroup::"
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error title=Build::Primary solution build failed."
+            exit $LASTEXITCODE
+          }
+
+      # ── 6. Build alt configurations ───────────────────────────────────────────
+      #       Reads altConfigs.txt (if present) and builds the primary solution once
+      #       per listed configuration. Format: one org/repo/ConfigName entry per line.
+      #       ZeroCodeTool configs require MSBuild restore; all others use NuGet restore.
+      #       Mirrors altConfigs handling in BHoMBot Core.cs.
+      - name: Build alt configurations
+        run: |
+          if (-not (Test-Path "altConfigs.txt")) {
+            Write-Host "::notice::No altConfigs.txt found — skipping alt configuration builds."
+            exit 0
+          }
+
+          $slnPath = "${{ steps.solution.outputs.path }}"
+          $configs = Get-Content altConfigs.txt |
+                     ForEach-Object { $_.Trim() } |
+                     Where-Object   { $_ -ne "" -and -not $_.StartsWith("#") }
+
+          $anyFailure = $false
+
+          foreach ($line in $configs) {
+            $parts = $line.Split('/')
+            if ($parts.Length -lt 3) {
+              Write-Host "::warning::Skipping malformed altConfigs entry: '$line' (expected org/repo/ConfigName)"
+              continue
+            }
+
+            $configName = $parts[2]
+            Write-Host "::group::Alt config: $configName"
+
+            if ($configName -eq "ZeroCodeTool") {
+              msbuild $slnPath /t:Restore /p:Configuration=$configName /verbosity:minimal /nologo
+            } else {
+              nuget restore $slnPath -NonInteractive
+            }
+
+            msbuild $slnPath /m /p:Configuration=$configName /p:Platform="Any CPU" /verbosity:minimal /nologo
+
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error title=Build::Alt config '$configName' failed."
+              $anyFailure = $true
+            } else {
+              Write-Host "::notice title=Build::Alt config '$configName' succeeded."
+            }
+
+            Write-Host "::endgroup::"
+          }
+
+          if ($anyFailure) { exit 1 }
