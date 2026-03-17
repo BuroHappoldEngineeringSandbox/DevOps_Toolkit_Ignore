@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# sync-editorconfig-pr.sh
+#
+# Opens or updates a PR in a target repo to sync the canonical .editorconfig.
+# Expects to run from the DevOps_Toolkit checkout root.
+#
+# Required environment variables:
+#   GH_TOKEN       - PAT with repo scope for cross-repo API calls
+#   TARGETS        - space-separated list of repo names to sync
+#   DRY_RUN        - 'true' to log targets without making any changes
+#   ORG            - GitHub organisation name
+#   CANONICAL      - path to the canonical .editorconfig (default: config/.editorconfig)
+#   PR_BODY_FILE   - path to the PR body markdown template
+#
+# Usage: bash .github/scripts/sync-editorconfig-pr.sh
+
+set -e
+
+CANONICAL="${CANONICAL:-config/.editorconfig}"
+PR_BODY_FILE="${PR_BODY_FILE:-.github/templates/sync-editorconfig-pr.md}"
+SYNC_BRANCH="chore/sync-editorconfig"
+COMMIT_MSG="chore: sync .editorconfig from DevOps_Toolkit"
+PR_TITLE="chore: sync .editorconfig from DevOps_Toolkit"
+
+if [ ! -f "$CANONICAL" ]; then
+  echo "::error::Canonical EditorConfig not found at '$CANONICAL'."
+  exit 1
+fi
+
+if [ ! -f "$PR_BODY_FILE" ]; then
+  echo "::error::PR body template not found at '$PR_BODY_FILE'."
+  exit 1
+fi
+
+if [ -z "$TARGETS" ]; then
+  echo "::notice::No target repos specified — nothing to sync."
+  exit 0
+fi
+
+pr_body=$(cat "$PR_BODY_FILE")
+file_content_b64=$(base64 -w 0 "$CANONICAL")
+
+# ── sync_repo: sync .editorconfig to a single repo ────────────────────────────
+sync_repo() {
+  local repo="$1"
+  local full="$ORG/$repo"
+
+  echo "::group::$full"
+
+  if [ "$DRY_RUN" = "true" ]; then
+    echo "::notice::DRY RUN — would sync to $full"
+    echo "::endgroup::"
+    return
+  fi
+
+  # Get default branch (fall back to 'main' if API fails)
+  local default_branch
+  default_branch=$(gh api "repos/$full" --jq '.default_branch' 2>/dev/null || echo "main")
+
+  # Get SHA of default branch tip
+  local base_sha
+  base_sha=$(gh api "repos/$full/git/ref/heads/$default_branch" \
+    --jq '.object.sha' 2>/dev/null || true)
+
+  if [ -z "$base_sha" ]; then
+    echo "::warning::Could not get SHA for $full — skipping."
+    echo "::endgroup::"
+    return
+  fi
+
+  # Create or reset the sync branch
+  local existing_ref
+  existing_ref=$(gh api "repos/$full/git/ref/heads/$SYNC_BRANCH" \
+    --jq '.ref' 2>/dev/null || true)
+
+  if [ -z "$existing_ref" ]; then
+    echo "Creating branch '$SYNC_BRANCH'..."
+    gh api "repos/$full/git/refs" \
+      --method POST \
+      --field ref="refs/heads/$SYNC_BRANCH" \
+      --field sha="$base_sha" > /dev/null
+  else
+    echo "Branch '$SYNC_BRANCH' exists — resetting to $default_branch tip..."
+    gh api "repos/$full/git/refs/heads/$SYNC_BRANCH" \
+      --method PATCH \
+      --field sha="$base_sha" \
+      --field force=true > /dev/null
+  fi
+
+  # Commit the canonical .editorconfig (create or update)
+  local existing_file_sha
+  existing_file_sha=$(gh api "repos/$full/contents/.editorconfig?ref=$SYNC_BRANCH" \
+    --jq '.sha' 2>/dev/null || true)
+
+  local api_args=(
+    "repos/$full/contents/.editorconfig"
+    --method PUT
+    --field message="$COMMIT_MSG"
+    --field content="$file_content_b64"
+    --field branch="$SYNC_BRANCH"
+  )
+  [ -n "$existing_file_sha" ] && api_args+=(--field sha="$existing_file_sha")
+
+  gh api "${api_args[@]}" > /dev/null
+  echo ".editorconfig committed to '$SYNC_BRANCH'."
+
+  # Open a PR if one does not already exist
+  local existing_pr
+  existing_pr=$(gh pr list \
+    --repo "$full" \
+    --head "$SYNC_BRANCH" \
+    --state open \
+    --json number \
+    --jq '.[0].number' 2>/dev/null || true)
+
+  if [ -n "$existing_pr" ]; then
+    echo "::notice::PR #$existing_pr already open — branch updated, PR remains."
+  else
+    local pr_url
+    pr_url=$(gh pr create \
+      --repo "$full" \
+      --head "$SYNC_BRANCH" \
+      --base "$default_branch" \
+      --title "$PR_TITLE" \
+      --body "$pr_body" 2>/dev/null || true)
+
+    if [ -n "$pr_url" ]; then
+      echo "::notice::PR opened: $pr_url"
+    else
+      echo "::warning::Branch updated but PR creation failed for $full."
+    fi
+  fi
+
+  echo "::endgroup::"
+}
+
+# ── Main: iterate over all target repos ───────────────────────────────────────
+for repo in $TARGETS; do
+  sync_repo "$repo"
+done
