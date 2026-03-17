@@ -31,13 +31,24 @@ jobs:
         with:
           fetch-depth: 1
 
-      # ── 2. Discover repos tagged 'bhom-managed' in the organisation ───────────
+      # ── 2. Generate a short-lived token from the bhom-bot GitHub App ─────────
+      #       Tokens auto-rotate every hour — no PAT expiry maintenance required.
+      #       PRs and commits will appear as authored by 'bhom-bot[bot]'.
+      #       Requires BHOM_APP_ID and BHOM_APP_PRIVATE_KEY org secrets.
+      - name: Generate bhom-bot token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BHOM_APP_ID }}
+          private-key: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      # ── 3. Discover repos tagged 'bhom-managed' in the organisation ───────────
       #       Excludes archived repos and DevOps_Toolkit itself.
-      #       Requires GH_TOKEN with 'repo' scope to list private repos.
       - name: Discover target repos
         id: discover
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           org="${{ github.repository_owner }}"
 
@@ -60,27 +71,14 @@ jobs:
             echo "targets=$targets" >> "$GITHUB_OUTPUT"
           fi
 
-      # ── 3. Verify GH_TOKEN is present before attempting cross-repo writes ───────
-      #       github.token only has access to DevOps_Toolkit itself — cross-repo
-      #       PR creation requires a PAT with 'repo' scope set as GH_TOKEN.
-      - name: Verify GH_TOKEN
-        if: steps.discover.outputs.targets != ''
-        run: |
-          if [ -z "${{ secrets.GH_TOKEN }}" ]; then
-            echo "::error title=Missing token::GH_TOKEN secret is not set."
-            echo "::error::Add a PAT with 'repo' scope as an organisation secret named GH_TOKEN."
-            echo "::error::GitHub → Org Settings → Secrets and variables → Actions → New organisation secret"
-            exit 1
-          fi
-          echo "::notice::GH_TOKEN is present."
-
       # ── 4. Sync canonical .editorconfig to each target repo ───────────────────
       #       See .github/scripts/sync-editorconfig-pr.sh for full logic.
       #       PR body template: .github/templates/sync-editorconfig-pr.md
+      #       Current year is substituted into the copyright header at sync time.
       - name: Sync to target repos
         if: steps.discover.outputs.targets != ''
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           ORG: ${{ github.repository_owner }}
           TARGETS: ${{ steps.discover.outputs.targets }}
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
