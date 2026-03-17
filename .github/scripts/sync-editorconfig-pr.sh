@@ -97,7 +97,7 @@ sync_repo() {
     echo "::endgroup::"
     return
   fi
-  local base_sha="$sha_error"
+  base_sha="$sha_error"
 
   # Delete the sync branch if it exists, then recreate from the default branch tip.
   # delete-then-create is simpler and more reliable than PATCH (which can return 422

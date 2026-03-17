@@ -25,13 +25,7 @@ jobs:
       contents: read   # read DevOps_Toolkit canonical file only
 
     steps:
-      # ── 1. Checkout DevOps_Toolkit ────────────────────────────────────────────
-      - name: Checkout DevOps_Toolkit
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      # ── 2. Generate a short-lived token from the bhom-bot GitHub App ─────────
+      # ── 1. Generate a short-lived token from the bhom-bot GitHub App ─────────
       #       Tokens auto-rotate every hour — no PAT expiry maintenance required.
       #       PRs and commits will appear as authored by 'bhom-bot[bot]'.
       #       Requires BHOM_APP_ID and BHOM_APP_PRIVATE_KEY org secrets.
@@ -42,6 +36,12 @@ jobs:
           app-id: ${{ secrets.BHOM_APP_ID }}
           private-key: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+
+      # ── 2. Checkout DevOps_Toolkit ────────────────────────────────────────────
+      - name: Checkout DevOps_Toolkit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       # ── 3. Discover repos tagged 'bhom-managed' in the organisation ───────────
       #       Excludes archived repos and DevOps_Toolkit itself.

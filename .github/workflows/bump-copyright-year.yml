@@ -65,17 +65,29 @@ jobs:
           git config user.email "bhom-bot[bot]@users.noreply.github.com"
 
           branch="chore/bump-copyright-$year"
-          git checkout -b "$branch"
+
+          # Idempotent: force-push to update branch if it already exists (keeps any
+          # open PR alive and updated) rather than failing on a duplicate push.
+          git checkout -b "$branch" 2>/dev/null || git checkout "$branch"
           git add "$file"
           git commit -m "chore: bump copyright year to $year"
-          git push origin "$branch"
+          git push --force-with-lease origin "$branch"
 
-          # Open a PR against main
+          # Open a PR only if one is not already open for this branch.
           pr_body="Automated annual copyright year bump in \`config/.editorconfig\`.\n\nOnce merged, the \`sync-editorconfig\` workflow will distribute the updated file to all repos tagged \`bhom-managed\`."
-          pr_url=$(gh pr create \
-            --base main \
+          existing_pr=$(gh pr list \
             --head "$branch" \
-            --title "chore: bump copyright year to $year" \
-            --body "$pr_body")
+            --state open \
+            --json number \
+            --jq '.[0].number' 2>/dev/null || true)
 
-          echo "::notice::PR opened: $pr_url"
+          if [ -n "$existing_pr" ]; then
+            echo "::notice::PR #$existing_pr already open — branch updated, PR remains."
+          else
+            pr_url=$(gh pr create \
+              --base main \
+              --head "$branch" \
+              --title "chore: bump copyright year to $year" \
+              --body "$pr_body")
+            echo "::notice::PR opened: $pr_url"
+          fi
