@@ -89,9 +89,11 @@ sync_repo() {
   local base_sha="$sha_error"
 
   # Create or reset the sync branch
+  # Use '.ref // empty' so jq returns nothing (not the string "null") for missing refs,
+  # ensuring bash treats a non-existent branch as an empty string.
   local existing_ref
   existing_ref=$(gh api "repos/$full/git/ref/heads/$SYNC_BRANCH" \
-    --jq '.ref' 2>/dev/null || true)
+    --jq '.ref // empty' 2>/dev/null || true)
 
   if [ -z "$existing_ref" ]; then
     echo "Creating branch '$SYNC_BRANCH'..."
@@ -108,9 +110,10 @@ sync_repo() {
   fi
 
   # Commit the canonical .editorconfig (create or update)
+  # Use '.sha // empty' for the same null-safety reason as the branch ref check above.
   local existing_file_sha
   existing_file_sha=$(gh api "repos/$full/contents/.editorconfig?ref=$SYNC_BRANCH" \
-    --jq '.sha' 2>/dev/null || true)
+    --jq '.sha // empty' 2>/dev/null || true)
 
   local api_args=(
     "repos/$full/contents/.editorconfig"
