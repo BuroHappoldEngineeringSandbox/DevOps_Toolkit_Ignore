@@ -68,6 +68,10 @@ jobs:
 
           # Idempotent: force-push to update branch if it already exists (keeps any
           # open PR alive and updated) rather than failing on a duplicate push.
+          # Fetch the branch first so --force-with-lease has a tracking ref to
+          # compare against; without this a fresh CI checkout has no tracking info
+          # for the branch and --force-with-lease rejects the push as "stale info".
+          git fetch origin "$branch" 2>/dev/null || true
           git checkout -b "$branch" 2>/dev/null || git checkout "$branch"
           git add "$file"
           git commit -m "chore: bump copyright year to $year"
