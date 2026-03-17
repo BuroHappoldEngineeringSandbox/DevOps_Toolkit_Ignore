@@ -29,11 +29,11 @@ on:
       compliance_checks:
         type: string
         required: false
-        default: "code copyright documentation project"
+        default: "code documentation project"
         # Space-separated list of compliance checks to run.
-        # Valid values: code, copyright, documentation, project
-        # Example — skip copyright: "code documentation project"
-        # Example — code only:      "code"
+        # Valid values: code, documentation, project
+        # copyright is enforced via IDE0073 (.editorconfig) rather than ComplianceRunner.
+        # Example — code only: "code"
       run_dataset_check:
         type: boolean
         required: false
@@ -83,7 +83,9 @@ jobs:
 
   # ── Format check ──────────────────────────────────────────────────────────
   # Runs dotnet format --verify-no-changes only for C# files changed in the PR.
-  # Reports issues as warnings (job still passes); no EditorConfig required (uses defaults).
+  # Reports issues as warnings (job still passes).
+  # The canonical BHoM .editorconfig (DevOps_Toolkit/config/.editorconfig) is applied
+  # automatically by check-format-pr.sh — individual repos do not need their own.
   format:
     if: inputs.run_format && github.event_name == 'pull_request'
     runs-on: ubuntu-latest

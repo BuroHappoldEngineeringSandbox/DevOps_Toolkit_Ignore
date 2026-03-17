@@ -4,11 +4,24 @@
 # Runs dotnet format --verify-no-changes only for C# files changed in the PR.
 # Expects to run from the caller repo root with changed_cs_files.txt in the current directory.
 # Reports issues as warnings (exits 0 so the job does not fail).
-# No EditorConfig required — uses dotnet format defaults.
+# Applies the canonical BHoM .editorconfig from DevOps_Toolkit/config/.editorconfig
+# so that all repos are checked against the same rules regardless of their local .editorconfig.
 #
 # Usage: bash check-format-pr.sh
 
 set -e
+
+# ── Apply canonical EditorConfig ──────────────────────────────────────────────
+# TOOLKIT_DIR is the path where DevOps_Toolkit was checked out (default: _toolkit).
+TOOLKIT_DIR="${TOOLKIT_DIR:-_toolkit}"
+CANONICAL_EDITORCONFIG="$TOOLKIT_DIR/config/.editorconfig"
+
+if [ -f "$CANONICAL_EDITORCONFIG" ]; then
+  cp "$CANONICAL_EDITORCONFIG" .editorconfig
+  echo "::notice::Canonical .editorconfig applied from $CANONICAL_EDITORCONFIG."
+else
+  echo "::warning::Canonical .editorconfig not found at $CANONICAL_EDITORCONFIG — using repo's own .editorconfig (if present)."
+fi
 
 if [ ! -f changed_cs_files.txt ]; then
   echo "::notice::changed_cs_files.txt not found — format check skipped."

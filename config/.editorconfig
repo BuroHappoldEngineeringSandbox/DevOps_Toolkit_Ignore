@@ -1,0 +1,85 @@
+root = true
+
+# ── Universal formatting defaults ─────────────────────────────────────────────
+[*]
+indent_style              = space
+indent_size               = 4
+end_of_line               = lf
+trim_trailing_whitespace  = true
+insert_final_newline      = true
+charset                   = utf-8
+
+# XML project files use 2-space indent by convention
+[*.{csproj,props,targets}]
+indent_size = 2
+
+# ── BHoM copyright file header enforcement (IDE0073) ─────────────────────────
+# Requires every .cs file to start with the BHoM LGPL copyright block.
+# Run `dotnet format` to auto-insert the header into files that are missing it.
+# Update the year on line 3 of the header each calendar year.
+[*.cs]
+file_header_template = This file is part of the Buildings and Habitats object Model (BHoM)\nCopyright (c) 2015 - 2025, the respective contributors. All rights reserved.\n\nEach contributor holds copyright over their respective contributions.\nThe project versioning (Git) records all such contribution source information.\n\nThe BHoM is free software: you can redistribute it and/or modify\nit under the terms of the GNU Lesser General Public License as published by\nthe Free Software Foundation, either version 3.0 of the License, or\n(at your option) any later version.\n\nThe BHoM is distributed in the hope that it will be useful,\nbut WITHOUT ANY WARRANTY, without even the implied warranty of\nMERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the\nGNU Lesser General Public License for more details.\n\nYou should have received a copy of the GNU Lesser General Public License\nalong with this code. If not, see <https://www.gnu.org/licenses/lgpl-3.0.html>.
+dotnet_diagnostic.IDE0073.severity = warning
+
+# Optional: exclude CI/test helper files from needing headers
+# [.ci/**]
+# dotnet_diagnostic.IDE0073.severity = none
+
+# ── Naming conventions (IDE1006) ──────────────────────────────────────────────
+# Methods must be PascalCase  (mirrors MethodNameStartsUpper compliance check)
+dotnet_naming_rule.methods_pascal_case.symbols   = method_symbols
+dotnet_naming_rule.methods_pascal_case.style     = pascal_case_style
+dotnet_naming_rule.methods_pascal_case.severity  = error
+
+dotnet_naming_symbols.method_symbols.applicable_kinds          = method
+dotnet_naming_symbols.method_symbols.applicable_accessibilities = *
+
+# Parameters must be camelCase  (mirrors InputParameterStartsLower compliance check)
+dotnet_naming_rule.parameters_camel_case.symbols   = parameter_symbols
+dotnet_naming_rule.parameters_camel_case.style     = camel_case_style
+dotnet_naming_rule.parameters_camel_case.severity  = error
+
+dotnet_naming_symbols.parameter_symbols.applicable_kinds          = parameter
+dotnet_naming_symbols.parameter_symbols.applicable_accessibilities = *
+
+dotnet_naming_style.pascal_case_style.capitalization = pascal_case
+dotnet_naming_style.camel_case_style.capitalization  = camel_case
+
+# ── Code cleanliness — no overlap with compliance engine ──────────────────────
+
+# IDE0005: Remove unnecessary using directives (auto-fixable via dotnet format)
+dotnet_diagnostic.IDE0005.severity = warning
+
+# IDE0036: Enforce consistent modifier order e.g. public static not static public
+csharp_preferred_modifier_order = public, private, protected, internal, static, extern, new, virtual, abstract, sealed, override, readonly, unsafe, volatile, async
+dotnet_diagnostic.IDE0036.severity = warning
+
+# IDE0044: Add readonly modifier to fields that are never reassigned after construction
+dotnet_style_readonly_field = true
+dotnet_diagnostic.IDE0044.severity = suggestion
+
+# IDE0060: Remove unused parameters — catches methods that silently ignore inputs
+dotnet_code_quality_unused_parameters = all
+dotnet_diagnostic.IDE0060.severity = suggestion
+
+# ── Pending review — overlaps with existing compliance engine checks ───────────
+# Uncomment once the corresponding compliance check has been assessed for retirement.
+
+# IDE0161: Prefer file-scoped namespace declarations (overlaps: HasSingleNamespace)
+# Requires converting all block-scoped namespaces to file-scoped — coordinate with
+# manager before enabling, given scope of change and Pawel's feedback on structural checks.
+# csharp_style_namespace_declarations = file_scoped:warning
+
+# IDE0032: Use auto-implemented properties (overlaps: PropertyAccessorsHaveNoBody)
+# Only meaningful for oM files; would need path-scoped override for Engine/Adapter.
+# dotnet_style_prefer_auto_properties = true:suggestion
+
+# IDE0040: Add explicit accessibility modifiers (overlaps: IsPublicClass, IsPublicProperty)
+# Enforces that a modifier is present but not that it is specifically public —
+# keep the compliance checks until a full replacement strategy is agreed.
+# dotnet_style_require_accessibility_modifiers = always:warning
+
+# IDE0130: Namespace does not match folder structure (overlaps: EngineClassMatchesFilePath)
+# Adjacent but not identical — compliance check validates class name vs file name,
+# IDE0130 validates namespace vs folder path. Both may need to coexist long-term.
+# dotnet_diagnostic.IDE0130.severity = warning
