@@ -53,20 +53,34 @@ sync_repo() {
     return
   fi
 
-  # Get default branch (fall back to 'main' if API fails)
+  # Get default branch — surface the error if the token lacks access to this repo
   local default_branch
-  default_branch=$(gh api "repos/$full" --jq '.default_branch' 2>/dev/null || echo "main")
+  local repo_api_error
+  repo_api_error=$(gh api "repos/$full" --jq '.default_branch' 2>&1)
+  local repo_api_exit=$?
 
-  # Get SHA of default branch tip
-  local base_sha
-  base_sha=$(gh api "repos/$full/git/ref/heads/$default_branch" \
-    --jq '.object.sha' 2>/dev/null || true)
-
-  if [ -z "$base_sha" ]; then
-    echo "::warning::Could not get SHA for $full — skipping."
+  if [ $repo_api_exit -ne 0 ]; then
+    echo "::warning::Could not access $full (exit $repo_api_exit). Check GH_TOKEN has 'repo' scope for this repo."
+    echo "::warning::API response: $repo_api_error"
     echo "::endgroup::"
     return
   fi
+  default_branch="$repo_api_error"
+
+  # Get SHA of default branch tip
+  local base_sha
+  local sha_error
+  sha_error=$(gh api "repos/$full/git/ref/heads/$default_branch" \
+    --jq '.object.sha' 2>&1)
+  local sha_exit=$?
+
+  if [ $sha_exit -ne 0 ] || [ -z "$sha_error" ]; then
+    echo "::warning::Could not get SHA for $full/$default_branch (exit $sha_exit)."
+    echo "::warning::API response: $sha_error"
+    echo "::endgroup::"
+    return
+  fi
+  local base_sha="$sha_error"
 
   # Create or reset the sync branch
   local existing_ref
