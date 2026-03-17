@@ -23,14 +23,9 @@ jobs:
       contents: read   # writing happens via bhom-bot token below
 
     steps:
-      # ── 1. Checkout DevOps_Toolkit ────────────────────────────────────────────
-      - name: Checkout DevOps_Toolkit
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      # ── 2. Generate a short-lived token from the bhom-bot GitHub App ─────────
-      #       PRs and commits will appear as authored by 'bhom-bot[bot]'.
+      # ── 1. Generate a short-lived token from the bhom-bot GitHub App ─────────
+      #       Must run before checkout so the token is used for the git remote,
+      #       allowing git push to authenticate as 'bhom-bot[bot]'.
       - name: Generate bhom-bot token
         id: app-token
         uses: actions/create-github-app-token@v1
@@ -38,6 +33,15 @@ jobs:
           app-id: ${{ secrets.BHOM_APP_ID }}
           private-key: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+
+      # ── 2. Checkout DevOps_Toolkit using the bhom-bot token ──────────────────
+      #       Passing token here configures the git remote with bhom-bot credentials
+      #       so that git push and gh pr create both authenticate as bhom-bot[bot].
+      - name: Checkout DevOps_Toolkit
+        uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 1
 
       # ── 3. Bump the year in config/.editorconfig and open a PR ───────────────
       - name: Bump copyright year
