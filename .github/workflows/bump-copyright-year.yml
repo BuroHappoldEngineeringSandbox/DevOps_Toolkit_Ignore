@@ -1,0 +1,77 @@
+name: Bump Copyright Year
+
+on:
+  schedule:
+    # Runs at 00:05 UTC on 1 Jan each year.
+    - cron: '5 0 1 1 *'
+  workflow_dispatch:
+    inputs:
+      year:
+        type: string
+        description: "Target year (defaults to current year). Format: YYYY"
+
+concurrency:
+  group: bump-copyright-year
+  cancel-in-progress: true
+
+jobs:
+  bump:
+    name: Update canonical .editorconfig year
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read   # writing happens via bhom-bot token below
+
+    steps:
+      # ── 1. Checkout DevOps_Toolkit ────────────────────────────────────────────
+      - name: Checkout DevOps_Toolkit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ── 2. Generate a short-lived token from the bhom-bot GitHub App ─────────
+      #       PRs and commits will appear as authored by 'bhom-bot[bot]'.
+      - name: Generate bhom-bot token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BHOM_APP_ID }}
+          private-key: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      # ── 3. Bump the year in config/.editorconfig and open a PR ───────────────
+      - name: Bump copyright year
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TARGET_YEAR: ${{ inputs.year || '' }}
+        run: |
+          year="${TARGET_YEAR:-$(date -u +%Y)}"
+          file="config/.editorconfig"
+
+          # Replace only if the year is actually stale (idempotent).
+          if grep -q "2015 - $year" "$file"; then
+            echo "::notice::Copyright year is already $year — nothing to do."
+            exit 0
+          fi
+
+          sed -i "s/2015 - [0-9]\{4\}/2015 - $year/g" "$file"
+
+          # Configure git to commit as bhom-bot
+          git config user.name  "bhom-bot[bot]"
+          git config user.email "bhom-bot[bot]@users.noreply.github.com"
+
+          branch="chore/bump-copyright-$year"
+          git checkout -b "$branch"
+          git add "$file"
+          git commit -m "chore: bump copyright year to $year"
+          git push origin "$branch"
+
+          # Open a PR against main
+          pr_body="Automated annual copyright year bump in \`config/.editorconfig\`.\n\nOnce merged, the \`sync-editorconfig\` workflow will distribute the updated file to all repos tagged \`bhom-managed\`."
+          pr_url=$(gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "chore: bump copyright year to $year" \
+            --body "$pr_body")
+
+          echo "::notice::PR opened: $pr_url"
