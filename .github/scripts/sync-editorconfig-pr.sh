@@ -22,6 +22,12 @@ SYNC_BRANCH="chore/sync-editorconfig"
 COMMIT_MSG="chore: sync .editorconfig from DevOps_Toolkit"
 PR_TITLE="chore: sync .editorconfig from DevOps_Toolkit"
 
+if [ -z "$GH_TOKEN" ]; then
+  echo "::error title=Missing token::GH_TOKEN is not set. This workflow requires a PAT with 'repo' scope."
+  echo "::error::Set GH_TOKEN as an organisation secret in GitHub → Settings → Secrets → Actions."
+  exit 1
+fi
+
 if [ ! -f "$CANONICAL" ]; then
   echo "::error::Canonical EditorConfig not found at '$CANONICAL'."
   exit 1

@@ -60,7 +60,21 @@ jobs:
             echo "targets=$targets" >> "$GITHUB_OUTPUT"
           fi
 
-      # ── 3. Sync canonical .editorconfig to each target repo ───────────────────
+      # ── 3. Verify GH_TOKEN is present before attempting cross-repo writes ───────
+      #       github.token only has access to DevOps_Toolkit itself — cross-repo
+      #       PR creation requires a PAT with 'repo' scope set as GH_TOKEN.
+      - name: Verify GH_TOKEN
+        if: steps.discover.outputs.targets != ''
+        run: |
+          if [ -z "${{ secrets.GH_TOKEN }}" ]; then
+            echo "::error title=Missing token::GH_TOKEN secret is not set."
+            echo "::error::Add a PAT with 'repo' scope as an organisation secret named GH_TOKEN."
+            echo "::error::GitHub → Org Settings → Secrets and variables → Actions → New organisation secret"
+            exit 1
+          fi
+          echo "::notice::GH_TOKEN is present."
+
+      # ── 4. Sync canonical .editorconfig to each target repo ───────────────────
       #       See .github/scripts/sync-editorconfig-pr.sh for full logic.
       #       PR body template: .github/templates/sync-editorconfig-pr.md
       - name: Sync to target repos
