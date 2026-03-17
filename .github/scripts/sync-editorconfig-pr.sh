@@ -88,26 +88,15 @@ sync_repo() {
   fi
   local base_sha="$sha_error"
 
-  # Create or reset the sync branch
-  # Use '.ref // empty' so jq returns nothing (not the string "null") for missing refs,
-  # ensuring bash treats a non-existent branch as an empty string.
-  local existing_ref
-  existing_ref=$(gh api "repos/$full/git/ref/heads/$SYNC_BRANCH" \
-    --jq '.ref // empty' 2>/dev/null || true)
-
-  if [ -z "$existing_ref" ]; then
-    echo "Creating branch '$SYNC_BRANCH'..."
-    gh api "repos/$full/git/refs" \
-      --method POST \
-      --field ref="refs/heads/$SYNC_BRANCH" \
-      --field sha="$base_sha" > /dev/null
-  else
-    echo "Branch '$SYNC_BRANCH' exists — resetting to $default_branch tip..."
-    gh api "repos/$full/git/refs/heads/$SYNC_BRANCH" \
-      --method PATCH \
-      --field sha="$base_sha" \
-      --field force=true > /dev/null
-  fi
+  # Delete the sync branch if it exists, then recreate from the default branch tip.
+  # delete-then-create is simpler and more reliable than PATCH (which can return 422
+  # if the branch exists in a broken state from a previous failed run).
+  echo "Resetting branch '$SYNC_BRANCH' to $default_branch tip..."
+  gh api "repos/$full/git/refs/heads/$SYNC_BRANCH" --method DELETE 2>/dev/null || true
+  gh api "repos/$full/git/refs" \
+    --method POST \
+    --field ref="refs/heads/$SYNC_BRANCH" \
+    --field sha="$base_sha" > /dev/null
 
   # Commit the canonical .editorconfig (create or update)
   # Use '.sha // empty' for the same null-safety reason as the branch ref check above.
