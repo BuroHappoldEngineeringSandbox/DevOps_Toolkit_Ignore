@@ -68,18 +68,18 @@ dotnet_diagnostic.IDE0060.severity = suggestion
 # IDE0161: Prefer file-scoped namespace declarations (overlaps: HasSingleNamespace)
 # Requires converting all block-scoped namespaces to file-scoped — coordinate with
 # manager before enabling, given scope of change and Pawel's feedback on structural checks.
-# csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_namespace_declarations = file_scoped:warning
 
 # IDE0032: Use auto-implemented properties (overlaps: PropertyAccessorsHaveNoBody)
 # Only meaningful for oM files; would need path-scoped override for Engine/Adapter.
-# dotnet_style_prefer_auto_properties = true:suggestion
+dotnet_style_prefer_auto_properties = true:suggestion
 
 # IDE0040: Add explicit accessibility modifiers (overlaps: IsPublicClass, IsPublicProperty)
 # Enforces that a modifier is present but not that it is specifically public —
 # keep the compliance checks until a full replacement strategy is agreed.
-# dotnet_style_require_accessibility_modifiers = always:warning
+dotnet_style_require_accessibility_modifiers = always:warning
 
 # IDE0130: Namespace does not match folder structure (overlaps: EngineClassMatchesFilePath)
 # Adjacent but not identical — compliance check validates class name vs file name,
 # IDE0130 validates namespace vs folder path. Both may need to coexist long-term.
-# dotnet_diagnostic.IDE0130.severity = warning
+dotnet_diagnostic.IDE0130.severity = warning

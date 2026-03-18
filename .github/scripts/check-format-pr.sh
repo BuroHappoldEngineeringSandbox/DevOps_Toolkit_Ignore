@@ -3,15 +3,19 @@
 #
 # Runs dotnet format --verify-no-changes only for C# files changed in the PR.
 # Expects to run from the caller repo root with changed_cs_files.txt in the current directory.
-# Reports issues as warnings (exits 0 so the job does not fail).
 # Applies the canonical BHoM .editorconfig from DevOps_Toolkit/config/.editorconfig
 # so that all repos are checked against the same rules regardless of their local .editorconfig.
+#
+# Severity behaviour:
+#   error-level diagnostics  → job fails (PR is blocked)
+#   warning-level diagnostics → job passes with a warning annotation
+#   suggestion-level          → not reported
 #
 # Usage: bash check-format-pr.sh
 
 set -e
 
-# ── Apply canonical EditorConfig ──────────────────────────────────────────────
+# Apply canonical EditorConfig.
 # TOOLKIT_DIR is the path where DevOps_Toolkit was checked out (default: _toolkit).
 TOOLKIT_DIR="${TOOLKIT_DIR:-_toolkit}"
 CANONICAL_EDITORCONFIG="$TOOLKIT_DIR/config/.editorconfig"
@@ -64,7 +68,42 @@ for sln in *.sln; do
   break
 done
 
-any_failed=0
+any_errors=0
+any_warnings=0
+
+# run_check TARGET LABEL [--include FILE ...]
+#
+# Pass 1: --severity warn  — full diagnostic report for annotations
+# Pass 2: --severity error — fast second pass only when pass 1 found violations,
+#         to distinguish blocking errors from advisory warnings.
+run_check() {
+  local target="$1" label="$2"
+  shift 2
+  local include_args=("$@")
+
+  echo "::group::dotnet format — $label"
+  set +e
+  dotnet format "$target" --verify-no-changes --verbosity diagnostic --severity warn "${include_args[@]}"
+  local warn_exit=$?
+  set -e
+  echo "::endgroup::"
+
+  if [ "$warn_exit" -ne 0 ]; then
+    # Determine whether any violations are error-level (suppress output — already shown above).
+    set +e
+    dotnet format "$target" --verify-no-changes --severity error "${include_args[@]}" > /dev/null 2>&1
+    local error_exit=$?
+    set -e
+
+    if [ "$error_exit" -ne 0 ]; then
+      echo "::error::Error-severity format violations found in $label. Run \`dotnet format\` locally to fix."
+      any_errors=1
+    else
+      echo "::warning::Format warnings found in $label. Run \`dotnet format\` locally to resolve."
+      any_warnings=1
+    fi
+  fi
+}
 
 # Split: files in a solution project vs files in a project not in the solution.
 solution_include=()
@@ -81,40 +120,30 @@ for csproj in "${!project_files[@]}"; do
   fi
 done
 
-# Run format against the solution for all changed files that belong to solution projects (emits full diagnostics).
+# Run against the solution for changed files that belong to solution projects.
 if [ ${#solution_include[@]} -gt 0 ] && [ ${#solution_projects[@]} -gt 0 ]; then
   sln=$(ls *.sln 2>/dev/null | head -1)
   if [ -n "$sln" ]; then
     include_args=()
     for f in "${solution_include[@]}"; do include_args+=(--include "$f"); done
-    echo "::group::dotnet format — $sln (solution; changed files in solution projects)"
-    set +e
-    dotnet format "$sln" --verify-no-changes --verbosity diagnostic "${include_args[@]}"
-    exitcode=$?
-    set -e
-    echo "::endgroup::"
-    [ "$exitcode" -ne 0 ] && any_failed=1
+    run_check "$sln" "$sln (solution; changed files in solution projects)" "${include_args[@]}"
   fi
 fi
 
-# Run format per project for changed files whose project is NOT in the solution (e.g. .ci test projects).
-# Use repo-relative paths for --include so dotnet format actually checks the files and reports violations.
+# Run per project for changed files whose project is NOT in the solution (e.g. .ci test projects).
 for csproj in "${!outside_solution[@]}"; do
   include_args=()
   for f in ${outside_solution[$csproj]}; do
     [ -n "$f" ] && include_args+=(--include "$f")
   done
   [ ${#include_args[@]} -eq 0 ] && continue
-  echo "::group::dotnet format — $csproj (outside solution)"
-  set +e
-  dotnet format "$csproj" --verify-no-changes --verbosity diagnostic "${include_args[@]}"
-  exitcode=$?
-  set -e
-  echo "::endgroup::"
-  [ "$exitcode" -ne 0 ] && any_failed=1
+  run_check "$csproj" "$csproj (outside solution)" "${include_args[@]}"
 done
 
-if [ "$any_failed" -ne 0 ]; then
-  echo "::warning title=Format check::Some changed files have formatting issues. Run \`dotnet format\` locally (or fix the reported files) to align with defaults."
+if [ "$any_errors" -ne 0 ]; then
+  echo "::error title=Format check::Error-severity format violations found. Run \`dotnet format\` locally to fix before merging."
+  exit 1
+elif [ "$any_warnings" -ne 0 ]; then
+  echo "::warning title=Format check::Format warnings found. Run \`dotnet format\` locally to resolve."
 fi
 exit 0

@@ -29,10 +29,11 @@ on:
       compliance_checks:
         type: string
         required: false
-        default: "code documentation project"
+        default: "code copyright documentation project"
         # Space-separated list of compliance checks to run.
-        # Valid values: code, documentation, project
-        # copyright is enforced via IDE0073 (.editorconfig) rather than ComplianceRunner.
+        # Valid values: code, copyright, documentation, project
+        # When run_format is true, 'copyright' is automatically removed — it is
+        # enforced instead via IDE0073 in the canonical .editorconfig.
         # Example — code only: "code"
       run_dataset_check:
         type: boolean
@@ -83,7 +84,10 @@ jobs:
 
   # ── Format check ──────────────────────────────────────────────────────────
   # Runs dotnet format --verify-no-changes only for C# files changed in the PR.
-  # Reports issues as warnings (job still passes).
+  # Severity behaviour mirrors the .editorconfig rules:
+  #   error-level diagnostics  → job fails (PR is blocked)
+  #   warning-level diagnostics → job passes with a warning annotation
+  #   suggestion-level          → not reported
   # The canonical BHoM .editorconfig (DevOps_Toolkit/config/.editorconfig) is applied
   # automatically by check-format-pr.sh — individual repos do not need their own.
   format:
@@ -152,22 +156,36 @@ jobs:
         shell: pwsh
 
     steps:
-      # ── 1. Shallow checkout — only enough history to reach the base commit ─
-      #       fetch-depth:1 + targeted fetch is faster than full history for
-      #       large repos, yet gives git diff everything it needs.
+      # Shallow checkout — only enough history to reach the base commit.
+      # fetch-depth:1 + targeted fetch is faster than full history for
+      # large repos, yet gives git diff everything it needs.
       - name: Checkout caller repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # ── 2. Detect relevant changed files BEFORE any expensive work ─────────
-      #       Gates all subsequent heavy steps so PRs that only touch YAML/docs
-      #       exit in seconds without building Test_Toolkit at all.
+      # Compute effective compliance checks.
+      # When run_format is true, 'copyright' is automatically excluded
+      # because EditorConfig IDE0073 enforces the header instead.
+      # All other checks are passed through unchanged.
+      - name: Compute effective compliance checks
+        id: effective_checks
+        run: |
+          $checks = "${{ inputs.compliance_checks }}"
+          if ("${{ inputs.run_format }}" -eq "true") {
+            $checks = ($checks -split ' ' | Where-Object { $_ -ne 'copyright' }) -join ' '
+            Write-Host "::notice::run_format is enabled — 'copyright' removed from compliance checks (enforced via EditorConfig IDE0073)."
+          }
+          "effective=$checks" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      # Detect relevant changed files BEFORE any expensive work.
+      # Gates all subsequent heavy steps so PRs that only touch YAML/docs
+      # exit in seconds without building Test_Toolkit at all.
       #
-      #       Uses the exact PR base SHA (not the branch name) with a two-dot
-      #       diff to avoid "no merge base" failures on shallow clones.
-      #       Three-dot diff (origin/branch...HEAD) requires a common ancestor
-      #       in the shallow graph, which is unavailable with fetch-depth:1.
+      # Uses the exact PR base SHA (not the branch name) with a two-dot
+      # diff to avoid "no merge base" failures on shallow clones.
+      # Three-dot diff (origin/branch...HEAD) requires a common ancestor
+      # in the shallow graph, which is unavailable with fetch-depth:1.
       - name: Compute changed files
         id: changed
         run: |
@@ -197,11 +215,11 @@ jobs:
             Write-Host "::notice::No relevant files changed (.cs / .csproj) — skipping compliance."
           }
 
-      # ── 3. Resolve and build Test_Toolkit + its transitive dependencies ───
-      #       Skipped entirely when no relevant files changed (saves 3–5 min).
-      #       MIGRATION: 'uses:' does not support expressions — org name must be a
-      #       literal. Update 'BuroHappoldEngineeringSandbox' to the prod org name
-      #       when promoting this workflow to production.
+      # Resolve and build Test_Toolkit + its transitive dependencies.
+      # Skipped entirely when no relevant files changed (saves 3–5 min).
+      # MIGRATION: 'uses:' does not support expressions — org name must be a
+      # literal. Update 'BuroHappoldEngineeringSandbox' to the prod org name
+      # when promoting this workflow to production.
       - name: Resolve dependencies (Test_Toolkit graph)
         if: steps.changed.outputs.count != '0'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
@@ -212,16 +230,16 @@ jobs:
           configuration:  ${{ inputs.configuration }}
           token:          ${{ secrets.GH_TOKEN }}
 
-      # ── 4. Stage built assemblies to C:\ProgramData\BHoM\Assemblies ───────
+      # Stage built assemblies to C:\ProgramData\BHoM\Assemblies.
       - name: Stage assemblies to ProgramData\BHoM\Assemblies
         if: steps.changed.outputs.count != '0'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
         with:
           source: deps-assemblies
 
-      # ── 5. Prepare ComplianceRunner ───────────────────────────────────────
-      #       Checks out DevOps_Toolkit, restores or builds the runner binary
-      #       with SHA-keyed caching, and outputs the exe path.
+      # Prepare ComplianceRunner.
+      # Checks out DevOps_Toolkit, restores or builds the runner binary
+      # with SHA-keyed caching, and outputs the exe path.
       - name: Prepare ComplianceRunner
         if: steps.changed.outputs.count != '0'
         id: runner
@@ -232,7 +250,7 @@ jobs:
           configuration:  ${{ inputs.configuration }}
           cache_prefix:   compliance-runner
 
-      # ── 6. Run each requested compliance check in its own log group ───────
+      # Run each requested compliance check in its own log group.
       - name: Run compliance checks
         id: run_checks
         if: steps.changed.outputs.count != '0'
@@ -243,9 +261,9 @@ jobs:
           # prevents PowerShell splatting the string character-by-character.
           $fileList = @(Get-Content changed_files.txt | ForEach-Object { $_ -replace '/', '\' })
 
-          # Inline split on the literal input value avoids parameter-boundary
-          # encoding issues that affected the previous external-script approach.
-          $checks = @("${{ inputs.compliance_checks }}" -split ' ' | Where-Object { $_ -ne '' })
+          # Use the effective checks list computed in the previous step.
+          # 'copyright' is automatically excluded when run_format is true.
+          $checks = @("${{ steps.effective_checks.outputs.effective }}" -split ' ' | Where-Object { $_ -ne '' })
 
           # Repository URL needed by the project compliance check (mirrors BHoMBot).
           $orgUrl = "${{ github.server_url }}/${{ github.repository }}"
@@ -290,7 +308,7 @@ jobs:
             exit 1
           }
 
-      # ── 7. Upload SARIF results to GitHub Code Scanning ───────────────────
+      # Upload SARIF results to GitHub Code Scanning.
       - name: Upload SARIF
         if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && always()
         uses: github/codeql-action/upload-sarif@v4
@@ -317,15 +335,15 @@ jobs:
         shell: pwsh
 
     steps:
-      # ── 1. Shallow checkout ───────────────────────────────────────────────
+      # Shallow checkout.
       - name: Checkout caller repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # ── 2. Detect changed dataset files BEFORE any expensive work ─────────
-      #       Filters for .json files whose repo-relative path contains /datasets/
-      #       mirroring the IsDatasetFile predicate in DatasetComplianceRunner.cs.
+      # Detect changed dataset files BEFORE any expensive work.
+      # Filters for .json files whose repo-relative path contains /datasets/,
+      # mirroring the IsDatasetFile predicate in DatasetComplianceRunner.cs.
       - name: Compute changed dataset files
         id: changed
         run: |
@@ -356,10 +374,10 @@ jobs:
             Write-Host "::notice::No changed dataset files detected — skipping dataset compliance."
           }
 
-      # ── 3. Resolve and build Test_Toolkit + its transitive dependencies ───
-      #       MIGRATION: 'uses:' does not support expressions — org name must be a
-      #       literal. Update 'BuroHappoldEngineeringSandbox' to the prod org name
-      #       when promoting this workflow to production.
+      # Resolve and build Test_Toolkit + its transitive dependencies.
+      # MIGRATION: 'uses:' does not support expressions — org name must be a
+      # literal. Update 'BuroHappoldEngineeringSandbox' to the prod org name
+      # when promoting this workflow to production.
       - name: Resolve dependencies (Test_Toolkit graph)
         if: steps.changed.outputs.count != '0'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
@@ -370,16 +388,16 @@ jobs:
           configuration:  ${{ inputs.configuration }}
           token:          ${{ secrets.GH_TOKEN }}
 
-      # ── 4. Stage built assemblies to C:\ProgramData\BHoM\Assemblies ───────
+      # Stage built assemblies to C:\ProgramData\BHoM\Assemblies.
       - name: Stage assemblies to ProgramData\BHoM\Assemblies
         if: steps.changed.outputs.count != '0'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
         with:
           source: deps-assemblies
 
-      # ── 5. Prepare DatasetComplianceRunner ────────────────────────────────
-      #       Checks out DevOps_Toolkit, restores or builds the runner binary
-      #       with SHA-keyed caching, and outputs the exe path.
+      # Prepare DatasetComplianceRunner.
+      # Checks out DevOps_Toolkit, restores or builds the runner binary
+      # with SHA-keyed caching, and outputs the exe path.
       - name: Prepare DatasetComplianceRunner
         if: steps.changed.outputs.count != '0'
         id: runner
@@ -390,7 +408,7 @@ jobs:
           configuration:  ${{ inputs.configuration }}
           cache_prefix:   dataset-runner
 
-      # ── 6. Run dataset compliance ─────────────────────────────────────────
+      # Run dataset compliance.
       - name: Run dataset compliance
         id: run_checks
         if: steps.changed.outputs.count != '0'
@@ -429,7 +447,7 @@ jobs:
             exit 1
           }
 
-      # ── 7. Upload SARIF results to GitHub Code Scanning ───────────────────
+      # Upload SARIF results to GitHub Code Scanning.
       - name: Upload SARIF
         if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && always()
         uses: github/codeql-action/upload-sarif@v4
