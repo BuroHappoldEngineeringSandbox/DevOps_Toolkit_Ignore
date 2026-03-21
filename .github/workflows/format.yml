@@ -1,0 +1,69 @@
+name: Format
+
+on:
+  workflow_call:
+    inputs:
+      dotnet_version:
+        type: string
+        required: false
+        default: "8.x"
+
+jobs:
+  # ── Format check ──────────────────────────────────────────────────────────
+  # Runs dotnet format --verify-no-changes only for C# files changed in the PR.
+  # Severity behaviour mirrors the .editorconfig rules:
+  #   error-level diagnostics  → job fails (PR is blocked)
+  #   warning-level diagnostics → job passes with a warning annotation
+  #   suggestion-level          → not reported
+  # The canonical BHoM .editorconfig (DevOps_Toolkit/config/.editorconfig) is applied
+  # automatically by check-format-pr.sh — individual repos do not need their own.
+  format:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet_version }}
+
+      - name: Compute changed C# files
+        id: changed
+        shell: bash
+        run: |
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          git fetch --depth=1 origin "$base_sha"
+
+          git diff --name-only --diff-filter=ACMRT "$base_sha" HEAD -- '*.cs' \
+            > changed_cs_files.txt
+
+          count=$(wc -l < changed_cs_files.txt | tr -d ' ')
+          echo "count=$count" >> $GITHUB_OUTPUT
+
+          if [ "$count" -gt 0 ]; then
+            echo "::notice::$count C# file(s) changed — running format check (warn only)."
+            cat changed_cs_files.txt
+          else
+            echo "::notice::No changed C# files — format check skipped."
+          fi
+
+      - name: Checkout DevOps_Toolkit (format script)
+        if: steps.changed.outputs.count != '0'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/DevOps_Toolkit
+          ref: main
+          path: _toolkit
+
+      - name: Check formatting (changed files only, warn only)
+        if: steps.changed.outputs.count != '0'
+        shell: bash
+        run: bash _toolkit/.github/scripts/check-format-pr.sh
