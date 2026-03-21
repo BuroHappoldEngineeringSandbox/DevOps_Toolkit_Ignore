@@ -21,7 +21,7 @@ on:
       run_dataset_check:
         type: boolean
         required: false
-        default: false
+        default: true
         # Set to true for repos that contain a datasets/ folder.
         # Runs IsValidDataset against every changed .json file under datasets/.
     secrets:
