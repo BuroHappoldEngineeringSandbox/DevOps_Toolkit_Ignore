@@ -13,6 +13,7 @@
 name: Orchestrator
 
 on:
+  workflow_call:
   pull_request:
   workflow_dispatch:
 
