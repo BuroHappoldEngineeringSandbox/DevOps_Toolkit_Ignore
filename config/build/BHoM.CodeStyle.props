@@ -1,0 +1,25 @@
+<Project>
+  <!-- NEED TO ENSURE IT IS UP-TO-DATE
+    BHoM.CodeStyle: packaged layout is build/BHoM.CodeStyle.props + content/.editorconfig
+    (MSBuildThisFileDirectory = .../packages/bhom.codestyle/<ver>/build/)
+  -->
+  <PropertyGroup>
+    <_BHoMCodeStyleEditorConfigPath>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine($(MSBuildThisFileDirectory), '..', 'content', '.editorconfig'))))</_BHoMCodeStyleEditorConfigPath>
+    <!-- Walk up from this project until we find Directory.Build.props — works without a .sln (SolutionDir often unset). -->
+    <_BHoMCodeStyleRepoRoot>$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildProjectDirectory), Directory.Build.props))</_BHoMCodeStyleRepoRoot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EditorConfigFiles Include="$(_BHoMCodeStyleEditorConfigPath)" />
+  </ItemGroup>
+
+  <Target Name="CopyBHoMEditorConfigToRepoRoot"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(_BHoMCodeStyleRepoRoot)' != '' And Exists('$(_BHoMCodeStyleEditorConfigPath)')">
+    <Copy SourceFiles="$(_BHoMCodeStyleEditorConfigPath)"
+          DestinationFiles="$([System.IO.Path]::Combine($(_BHoMCodeStyleRepoRoot), '.editorconfig'))"
+          SkipUnchangedFiles="true" />
+    <Message Text="BHoM.CodeStyle: synced .editorconfig to $(_BHoMCodeStyleRepoRoot)"
+             Importance="low" />
+  </Target>
+</Project>

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+  <metadata>
+    <id>BHoM.CodeStyle</id>
+    <version>1.0.2</version>
+    <authors>BHoM</authors>
+    <owners>BHoM</owners>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <license type="expression">LGPL-3.0-only</license>
+    <projectUrl>https://github.com/BHoM/DevOps_Toolkit</projectUrl>
+    <description>
+        Canonical BHoM .editorconfig and analyzer settings for BHoM repositories.
+        Reference this package to apply the same formatting and style rules as DevOps_Toolkit/config/.editorconfig.
+    </description>
+    <tags>editorconfig codestyle bhom</tags>
+    <developmentDependency>true</developmentDependency>
+  </metadata>
+  <files>
+    <!-- build: direct PackageReference; buildTransitive: when referenced transitively -->
+    <file src="build/BHoM.CodeStyle.props" target="build" />
+    <file src="build/BHoM.CodeStyle.props" target="buildTransitive" />
+    <file src=".editorconfig" target="content/.editorconfig" />
+  </files>
+</package>

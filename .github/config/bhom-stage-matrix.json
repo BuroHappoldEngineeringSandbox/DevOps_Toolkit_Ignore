@@ -1,0 +1,38 @@
+{
+  "topic_priority": [
+    "bhom-beta",
+    "bhom-alpha",
+    "bhom-prototype"
+  ],
+  "defaults": {
+    "dotnet_version": "8.x",
+    "unit_dotnet_version": "10.x",
+    "configuration": "Release"
+  },
+  "stages": {
+    "bhom-prototype": {
+      "compliance_checks": "copyright project",
+      "run_dataset_check": false,
+      "run_coverage": false,
+      "coverage_on_push": false,
+      "run_build": false,
+      "run_unit_tests": false
+    },
+    "bhom-alpha": {
+      "compliance_checks": "copyright project",
+      "run_dataset_check": false,
+      "run_coverage": false,
+      "coverage_on_push": false,
+      "run_build": true,
+      "run_unit_tests": false
+    },
+    "bhom-beta": {
+      "compliance_checks": "code copyright documentation project",
+      "run_dataset_check": true,
+      "run_coverage": true,
+      "coverage_on_push": true,
+      "run_build": true,
+      "run_unit_tests": true
+    }
+  }
+}

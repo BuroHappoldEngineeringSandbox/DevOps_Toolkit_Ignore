@@ -1,0 +1,9 @@
+<!-- config/BHoM.CodeStyle.csproj — packs BHoM.CodeStyle.nuspec -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <NuspecFile>BHoM.CodeStyle.nuspec</NuspecFile>
+    <NuspecBasePath>.</NuspecBasePath>
+    <NoDefaultExcludes>true</NoDefaultExcludes>
+  </PropertyGroup>
+</Project>
