@@ -1,138 +1,224 @@
-# # Runs reusable CI workflows based on repository topics (bhom-prototype | bhom-alpha | bhom-beta).
-# #
-# # Platform (DevOps_Toolkit): bhom-stage-matrix.json — which jobs run per stage and, when
-# # compliance runs, which compliance checks (space-separated: code, copyright, documentation, project).
-# # Per-repo: .github/bhom-ci.json merged over bhom-repo-defaults.json for dotnet_version,
-# # configuration, test_solution, run_dataset_check (unless matrix sets it), coverage flags.
-# # compliance_checks is matrix-only. Dataset compliance is ci-dataset-compliance.yml (optional job).
-# #
-# # Topic precedence if several are set: bhom-beta > bhom-alpha > bhom-prototype.
-# # Consumer repos: trigger this workflow only (see BHoM_Engine/.github/workflows/ci.yml).
+name: CI Orchestrator
 
-# name: Orchestrator
+on:
+  workflow_call:
+    secrets:
+      GH_TOKEN:
+        required: false
 
-# on:
-#   workflow_call:
-#   pull_request:
-#   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
-# concurrency:
-#   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-#   cancel-in-progress: true
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      state:             ${{ steps.topic.outputs.state }}
+      dotnet_version:    ${{ steps.config.outputs.dotnet_version }}
+      configuration:     ${{ steps.config.outputs.configuration }}
+      test_solution:     ${{ steps.config.outputs.test_solution }}
+      run_format:        ${{ steps.policy.outputs.run_format }}
+      run_compliance:    ${{ steps.policy.outputs.run_compliance }}
+      compliance_checks: ${{ steps.policy.outputs.compliance_checks }}
+      run_dataset:       ${{ steps.policy.outputs.run_dataset }}
+      run_build:         ${{ steps.policy.outputs.run_build }}
+      run_unit_tests:    ${{ steps.policy.outputs.run_unit_tests }}
 
-# permissions:
-#   actions: write
-#   checks: write
-#   contents: read
-#   pull-requests: write
-#   security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 1
 
-# jobs:
-#   resolve-stage:
-#     name: Resolve BHoM stage
-#     runs-on: ubuntu-latest
-#     timeout-minutes: 5
-#     outputs:
-#       stage: ${{ steps.pick.outputs.stage }}
+      - name: Read GitHub Topic
+        id: topic
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          TOPICS=$(gh api repos/${{ github.repository }} --jq '.topics[]')
 
-#       dotnet_version: ${{ steps.pick.outputs.dotnet_version }}
-#       configuration: ${{ steps.pick.outputs.configuration }}
+          if echo "$TOPICS" | grep -q "bhom-beta"; then
+            STATE="beta"
+          elif echo "$TOPICS" | grep -q "bhom-alpha"; then
+            STATE="alpha"
+          elif echo "$TOPICS" | grep -q "bhom-prototype"; then
+            STATE="prototype"
+          else
+            echo "::error::No valid state topic found. Add bhom-prototype, bhom-alpha or bhom-beta to repo topics."
+            exit 1
+          fi
 
-#       run_format: ${{ steps.pick.outputs.run_format }}
+          echo "state=$STATE" >> $GITHUB_OUTPUT
+          echo "::notice::Repo state: $STATE"
 
-#       run_compliance: ${{ steps.pick.outputs.run_compliance }}
-#       compliance_checks: ${{ steps.pick.outputs.compliance_checks }}
-#       run_dataset_check: ${{ steps.pick.outputs.run_dataset_check }}
+      - name: Checkout central .github repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          repository: your-org/.github
+          ref: v1
+          path: _central
 
-#       test_solution: ${{ steps.pick.outputs.test_solution }}
-#       run_unit_tests: ${{ steps.pick.outputs.run_unit_tests }}
-#       run_coverage: ${{ steps.pick.outputs.run_coverage }}
-#       coverage_on_push: ${{ steps.pick.outputs.coverage_on_push }}
+      - name: Validate policy.json
+        run: |
+          POLICY="_central/policy.json"
 
-#       run_build: ${{ steps.pick.outputs.run_build }}
-#     steps:
-#       - name: Checkout repository
-#         uses: actions/checkout@v4
-#         with:
-#           fetch-depth: 1
+          if [ ! -f "$POLICY" ]; then
+            echo "::error::policy.json not found in central .github repo."
+            exit 1
+          fi
 
-#       - name: Checkout DevOps_Toolkit
-#         if: hashFiles('.github/config/bhom-stage-matrix.json') == ''
-#         uses: actions/checkout@v4
-#         with:
-#           repository: ${{ github.repository_owner }}/DevOps_Toolkit
-#           ref: main
-#           path: _toolkit
+          # validate all required states exist
+          for state in prototype alpha beta; do
+            for key in format compliance compliance_checks dataset build unit-tests; do
+              VALUE=$(jq -r ".$state.$key // \"__missing__\"" $POLICY)
+              if [ "$VALUE" == "__missing__" ]; then
+                echo "::error::policy.json missing required key: $state.$key"
+                exit 1
+              fi
+            done
+          done
 
-#       - name: Resolve stage and parameters
-#         id: pick
-#         env:
-#           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-#         shell: bash
-#         run: |
-#           set -euo pipefail
-#           if [[ -f .github/scripts/resolve-bhom-stage.sh ]]; then
-#             bash .github/scripts/resolve-bhom-stage.sh
-#           else
-#             bash _toolkit/.github/scripts/resolve-bhom-stage.sh
-#           fi
+          echo "::notice::policy.json is valid"
 
-#   format:
-#     name: Format
-#     needs: resolve-stage
-#     if: needs.resolve-stage.outputs.run_format == 'true'
-#     uses: ./.github/workflows/ci-format.yml
-#     with:
-#       dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
+      - name: Read policy
+        id: policy
+        run: |
+          POLICY="_central/policy.json"
+          STATE="${{ steps.topic.outputs.state }}"
 
-#   compliance:
-#     name: Compliance
-#     needs: resolve-stage
-#     if: needs.resolve-stage.outputs.run_compliance == 'true'
-#     uses: ./.github/workflows/ci-compliance.yml
-#     secrets: inherit
-#     with:
-#       dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
-#       configuration: ${{ needs.resolve-stage.outputs.configuration }}
-#       compliance_checks: ${{ needs.resolve-stage.outputs.compliance_checks }}
+          RUN_FORMAT=$(jq -r        ".$STATE.format"            $POLICY)
+          RUN_COMPLIANCE=$(jq -r    ".$STATE.compliance"        $POLICY)
+          COMPLIANCE_CHECKS=$(jq -r ".$STATE.compliance_checks" $POLICY)
+          RUN_DATASET=$(jq -r       ".$STATE.dataset"           $POLICY)
+          RUN_BUILD=$(jq -r         ".$STATE.build"             $POLICY)
+          RUN_UNIT_TESTS=$(jq -r    ".\"$STATE\".\"unit-tests\"" $POLICY)
 
-#   dataset-compliance:
-#     name: Dataset compliance
-#     needs: resolve-stage
-#     if: needs.resolve-stage.outputs.run_dataset_check == 'true'
-#     uses: ./.github/workflows/ci-dataset-compliance.yml
-#     secrets: inherit
-#     with:
-#       dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
-#       configuration: ${{ needs.resolve-stage.outputs.configuration }}
+          # bhom.json compliance override
+          BHOM=".github/bhom.json"
+          if [ -f "$BHOM" ]; then
+            OVERRIDE=$(jq -r '.compliance.checks // empty' $BHOM)
+            if [ -n "$OVERRIDE" ]; then
+              # validate override values
+              VALID="project code copyright documentation"
+              for check in $OVERRIDE; do
+                if ! echo "$VALID" | grep -qw "$check"; then
+                  echo "::error::Invalid compliance check in bhom.json: '$check'. Valid values: $VALID"
+                  exit 1
+                fi
+              done
+              COMPLIANCE_CHECKS="$OVERRIDE"
+              echo "::notice::Compliance checks overridden by bhom.json: $COMPLIANCE_CHECKS"
+            fi
+          fi
 
-#   build:
-#     name: Build
-#     needs:
-#       - resolve-stage
-#       - format
-#       - compliance
-#       - dataset-compliance
-#     if: |
-#       needs.resolve-stage.outputs.run_build == 'true' &&
-#       (needs.format.result == 'success' || needs.format.result == 'skipped') &&
-#       (needs.compliance.result == 'success' || needs.compliance.result == 'skipped') &&
-#       (needs.dataset-compliance.result == 'success' || needs.dataset-compliance.result == 'skipped')
-#     uses: ./.github/workflows/ci-build.yml
-#     secrets: inherit
-#     with:
-#       dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
-#       configuration: ${{ needs.resolve-stage.outputs.configuration }}
+          echo "run_format=$RUN_FORMAT"               >> $GITHUB_OUTPUT
+          echo "run_compliance=$RUN_COMPLIANCE"       >> $GITHUB_OUTPUT
+          echo "compliance_checks=$COMPLIANCE_CHECKS" >> $GITHUB_OUTPUT
+          echo "run_dataset=$RUN_DATASET"             >> $GITHUB_OUTPUT
+          echo "run_build=$RUN_BUILD"                 >> $GITHUB_OUTPUT
+          echo "run_unit_tests=$RUN_UNIT_TESTS"       >> $GITHUB_OUTPUT
 
-#   unit-tests:
-#     name: Unit Tests
-#     needs:
-#       - resolve-stage
-#       - build
-#     if: needs.resolve-stage.outputs.run_unit_tests == 'true'
-#     uses: ./.github/workflows/ci-unit-tests.yml
-#     secrets: inherit
-#     with:
-#       dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
-#       configuration: ${{ needs.resolve-stage.outputs.configuration }}
-#       test_solution: ${{ needs.resolve-stage.outputs.test_solution }}
+          echo "::notice::run_format=$RUN_FORMAT"
+          echo "::notice::run_compliance=$RUN_COMPLIANCE"
+          echo "::notice::compliance_checks=$COMPLIANCE_CHECKS"
+          echo "::notice::run_dataset=$RUN_DATASET"
+          echo "::notice::run_build=$RUN_BUILD"
+          echo "::notice::run_unit_tests=$RUN_UNIT_TESTS"
+
+      - name: Read bhom.json config
+        id: config
+        run: |
+          BHOM=".github/bhom.json"
+
+          # defaults
+          DOTNET_VERSION="8.0"
+          CONFIGURATION="Release"
+          TEST_SOLUTION=""
+
+          if [ ! -f "$BHOM" ]; then
+            echo "::notice::No bhom.json found — using orchestrator defaults"
+          else
+            _DOTNET=$(jq -r    '.dotnet_version       // empty' $BHOM)
+            _CONFIG=$(jq -r    '.configuration        // empty' $BHOM)
+            _SOLUTION=$(jq -r  '.unit_tests.solution  // empty' $BHOM)
+
+            DOTNET_VERSION=${_DOTNET:-$DOTNET_VERSION}
+            CONFIGURATION=${_CONFIG:-$CONFIGURATION}
+            TEST_SOLUTION=${_SOLUTION:-$TEST_SOLUTION}
+          fi
+
+          echo "dotnet_version=$DOTNET_VERSION" >> $GITHUB_OUTPUT
+          echo "configuration=$CONFIGURATION"   >> $GITHUB_OUTPUT
+          echo "test_solution=$TEST_SOLUTION"   >> $GITHUB_OUTPUT
+
+          echo "::notice::dotnet_version=$DOTNET_VERSION"
+          echo "::notice::configuration=$CONFIGURATION"
+          echo "::notice::test_solution=${TEST_SOLUTION:-not set}"
+
+  # ── Jobs ────────────────────────────────────────────────────────────────────
+
+  format:
+    needs: setup
+    if: |
+      needs.setup.result == 'success' &&
+      needs.setup.outputs.run_format == 'true'
+    uses: your-org/.github/.github/workflows/ci-format.yml@v1
+    with:
+      dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+  compliance:
+    needs: setup
+    if: |
+      needs.setup.result == 'success' &&
+      needs.setup.outputs.run_compliance == 'true'
+    uses: your-org/.github/.github/workflows/ci-compliance.yml@v1
+    with:
+      dotnet_version:    ${{ needs.setup.outputs.dotnet_version }}
+      configuration:     ${{ needs.setup.outputs.configuration }}
+      compliance_checks: ${{ needs.setup.outputs.compliance_checks }}
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+  dataset:
+    needs: setup
+    if: |
+      needs.setup.result == 'success' &&
+      needs.setup.outputs.run_dataset == 'true'
+    uses: your-org/.github/.github/workflows/ci-dataset.yml@v1
+    with:
+      dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
+      configuration:  ${{ needs.setup.outputs.configuration }}
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+  build:
+    needs: setup
+    if: |
+      needs.setup.result == 'success' &&
+      needs.setup.outputs.run_build == 'true'
+    uses: your-org/.github/.github/workflows/ci-build.yml@v1
+    with:
+      dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
+      configuration:  ${{ needs.setup.outputs.configuration }}
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+  unit-tests:
+    needs: setup
+    if: |
+      needs.setup.result == 'success' &&
+      needs.setup.outputs.run_unit_tests == 'true' &&
+      needs.setup.outputs.test_solution != ''
+    uses: your-org/.github/.github/workflows/ci-unit-tests.yml@v1
+    with:
+      dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
+      configuration:  ${{ needs.setup.outputs.configuration }}
+      test_solution:  ${{ needs.setup.outputs.test_solution }}
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
