@@ -11,8 +11,7 @@ on:
         required: true
       compliance_checks:
         type: string
-        required: false
-        default: "code copyright documentation project"
+        required: true
     secrets:
       GH_TOKEN:
         required: false
