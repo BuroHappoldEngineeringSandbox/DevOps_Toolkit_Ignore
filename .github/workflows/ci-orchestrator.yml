@@ -4,7 +4,7 @@
 # # compliance runs, which compliance checks (space-separated: code, copyright, documentation, project).
 # # Per-repo: .github/bhom-ci.json merged over bhom-repo-defaults.json for dotnet_version,
 # # configuration, test_solution, run_dataset_check (unless matrix sets it), coverage flags.
-# # compliance_checks is matrix-only. Optional matrix key run_dataset_check overrides repo for that stage.
+# # compliance_checks is matrix-only. Dataset compliance is ci-dataset-compliance.yml (optional job).
 # #
 # # Topic precedence if several are set: bhom-beta > bhom-alpha > bhom-prototype.
 # # Consumer repos: trigger this workflow only (see BHoM_Engine/.github/workflows/ci.yml).
@@ -95,7 +95,16 @@
 #       dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
 #       configuration: ${{ needs.resolve-stage.outputs.configuration }}
 #       compliance_checks: ${{ needs.resolve-stage.outputs.compliance_checks }}
-#       run_dataset_check: ${{ needs.resolve-stage.outputs.run_dataset_check == 'true' }}
+
+#   dataset-compliance:
+#     name: Dataset compliance
+#     needs: resolve-stage
+#     if: needs.resolve-stage.outputs.run_dataset_check == 'true'
+#     uses: ./.github/workflows/ci-dataset-compliance.yml
+#     secrets: inherit
+#     with:
+#       dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
+#       configuration: ${{ needs.resolve-stage.outputs.configuration }}
 
 #   build:
 #     name: Build
@@ -103,10 +112,12 @@
 #       - resolve-stage
 #       - format
 #       - compliance
+#       - dataset-compliance
 #     if: |
 #       needs.resolve-stage.outputs.run_build == 'true' &&
 #       (needs.format.result == 'success' || needs.format.result == 'skipped') &&
-#       (needs.compliance.result == 'success' || needs.compliance.result == 'skipped')
+#       (needs.compliance.result == 'success' || needs.compliance.result == 'skipped') &&
+#       (needs.dataset-compliance.result == 'success' || needs.dataset-compliance.result == 'skipped')
 #     uses: ./.github/workflows/ci-build.yml
 #     secrets: inherit
 #     with:
@@ -125,5 +136,3 @@
 #       dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
 #       configuration: ${{ needs.resolve-stage.outputs.configuration }}
 #       test_solution: ${{ needs.resolve-stage.outputs.test_solution }}
-#       run_coverage: ${{ needs.resolve-stage.outputs.run_coverage == 'true' }}
-#       coverage_on_push: ${{ needs.resolve-stage.outputs.coverage_on_push == 'true' }}

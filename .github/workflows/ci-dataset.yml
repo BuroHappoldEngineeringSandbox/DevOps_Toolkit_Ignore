@@ -1,0 +1,137 @@
+name: Dataset compliance
+
+on:
+  workflow_call:
+    inputs:
+      dotnet_version:
+        type: string
+        required: true
+      configuration:
+        type: string
+        required: true
+    secrets:
+      GH_TOKEN:
+        required: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dataset:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+      security-events: write
+      actions: write
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Compute changed dataset files
+        id: changed
+        run: |
+          if ("${{ github.event_name }}" -ne "pull_request") {
+            "count=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "::notice::Not a pull request — dataset check skipped."
+            exit 0
+          }
+
+          $baseSha = "${{ github.event.pull_request.base.sha }}"
+          git fetch --depth=1 origin $baseSha
+
+          $files = git diff --name-only --diff-filter=ACMRT "$baseSha" HEAD |
+                   Where-Object {
+                     $_.ToLower().EndsWith(".json") -and
+                     $_.Replace('\', '/').ToLower() -match '/datasets/'
+                   }
+
+          $count = ($files | Measure-Object).Count
+          $files -join "`n" | Out-File changed_dataset_files.txt -Encoding utf8
+
+          "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          if ($count -gt 0) {
+            Write-Host "::notice::$count dataset file(s) changed — running dataset compliance."
+            Get-Content changed_dataset_files.txt
+          } else {
+            Write-Host "::notice::No changed dataset files detected — skipping dataset compliance."
+          }
+
+      - name: Resolve dependencies (Test_Toolkit graph)
+        if: steps.changed.outputs.count != '0'
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
+        with:
+          mode:           seeds
+          seeds:          BHoM/Test_Toolkit
+          dotnet_version: ${{ inputs.dotnet_version }}
+          configuration:  ${{ inputs.configuration }}
+          token:          ${{ secrets.GH_TOKEN }}
+
+      - name: Stage assemblies to ProgramData\BHoM\Assemblies
+        if: steps.changed.outputs.count != '0'
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
+        with:
+          source: deps-assemblies
+
+      - name: Prepare DatasetComplianceRunner
+        if: steps.changed.outputs.count != '0'
+        id: runner
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/prepare-runner@main
+        with:
+          runner_project: src/DatasetComplianceRunner/DatasetComplianceRunner.csproj
+          output_dir:     out\dataset-runner
+          configuration:  ${{ inputs.configuration }}
+          cache_prefix:   dataset-runner
+
+      - name: Run dataset compliance
+        id: run_checks
+        if: steps.changed.outputs.count != '0'
+        run: |
+          $runner = "${{ steps.runner.outputs.runner_exe }}"
+
+          $fileList = @(Get-Content changed_dataset_files.txt | ForEach-Object { $_ -replace '/', '\' })
+
+          Write-Host "::group::BHoM dataset compliance"
+          & $runner --output github @fileList
+          $ok = ($LASTEXITCODE -eq 0)
+          Write-Host "::endgroup::"
+
+          Write-Host "::group::SARIF export (dataset)"
+          & $runner --output sarif --sarif-file dataset-compliance.sarif @fileList
+          $sarifGenerated = ($LASTEXITCODE -eq 0).ToString().ToLower()
+          Write-Host "::endgroup::"
+
+          "sarif_generated=$sarifGenerated" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          if ($env:GITHUB_STEP_SUMMARY) {
+            $icon   = if ($ok) { ":white_check_mark:" } else { ":x:" }
+            $status = if ($ok) { "Passed" } else { "**Failed**" }
+            @(
+              "### Dataset compliance check results",
+              "",
+              "| Check | Result |",
+              "|---|---|",
+              "| dataset | $icon $status |"
+            ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          }
+
+          if (-not $ok) {
+            Write-Host "::error::Dataset compliance check failed."
+            exit 1
+          }
+
+      - name: Upload SARIF
+        if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: dataset-compliance.sarif
+          category:   bhom-dataset-compliance-pr-delta
