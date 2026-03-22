@@ -16,6 +16,10 @@ on:
       GH_TOKEN:
         required: false  # optional PAT for private deps; else github.token
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   unit-tests:
     runs-on: windows-latest

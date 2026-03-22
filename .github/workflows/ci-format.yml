@@ -7,6 +7,10 @@ on:
         type: string
         required: true
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # dotnet format on PR diffs only; uses DevOps_Toolkit/.github/scripts/check-format-pr.sh + shared .editorconfig.
   format:
