@@ -210,11 +210,13 @@ jobs:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
   unit-tests:
-    needs: setup
+    needs: [setup, build]
     if: |
+      always() &&
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_unit_tests == 'true' &&
-      needs.setup.outputs.test_solution != ''
+      needs.setup.outputs.test_solution != '' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-unit-tests.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
