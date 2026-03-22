@@ -5,63 +5,46 @@ on:
     inputs:
       dotnet_version:
         type: string
-        required: false
-        default: "8.x"
-        # .NET SDK version for SDK-style projects. Legacy .NET Framework projects
-        # use MSBuild (set up by resolve-dependencies) regardless of this value.
+        required: true
+        # SDK-style: dotnet CLI. Legacy Framework: MSBuild + NuGet from resolve-dependencies.
       configuration:
         type: string
-        required: false
-        default: "Release"
+        required: true
     secrets:
       GH_TOKEN:
-        required: false   # PAT for cloning private dependency repositories; falls back to github.token
+        required: false  # optional PAT for private deps; else github.token
 
 jobs:
-  # ── Build the caller repository ───────────────────────────────────────────────
-  #    1. Resolves and builds the full transitive dependency graph (dependencies.txt).
-  #    2. Builds the caller repo's primary solution in the requested configuration.
-  #    3. Builds any alternate configurations declared in altConfigs.txt.
   build:
     runs-on: windows-latest
     timeout-minutes: 30
     permissions:
       contents: read
-      actions: write   # required for cache save in cross-repo composite actions
+      actions: write  # composite action cache
     defaults:
       run:
         shell: pwsh
 
     steps:
-      # ── 1. Checkout ───────────────────────────────────────────────────────────
       - name: Checkout caller repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # ── 2. Resolve and build caller dependency graph ──────────────────────────
-      #       Reads dependencies.txt, clones + builds the full transitive graph,
-      #       caches the resulting assemblies, and uploads them as deps-assemblies/.
       - name: Resolve dependencies
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
         with:
-          mode:           caller
+          mode: caller
           dotnet_version: ${{ inputs.dotnet_version }}
-          configuration:  ${{ inputs.configuration }}
-          token:          ${{ secrets.GH_TOKEN }}
+          configuration: ${{ inputs.configuration }}
+          token: ${{ secrets.GH_TOKEN }}
 
-      # ── 3. Stage dependency assemblies ────────────────────────────────────────
-      #       Copies DLLs to C:\ProgramData\BHoM\Assemblies so that HintPath
-      #       references in the primary solution's .csproj files resolve at build time.
       - name: Stage assemblies
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
         with:
           source: deps-assemblies
 
-      # ── 4. Discover primary solution ──────────────────────────────────────────
-      #       Prefers <RepoName>.sln at the root (BHoM convention); falls back to
-      #       any .sln found recursively. Also detects legacy packages.config usage
-      #       to decide between NuGet+MSBuild and dotnet build.
+      # Prefer <RepoName>.sln at repo root; else first .sln. packages.config => legacy NuGet+MSBuild path.
       - name: Discover primary solution
         id: solution
         run: |
@@ -88,9 +71,6 @@ jobs:
 
           Write-Host "::notice title=Solution::$slnPath (legacy=$isLegacy)"
 
-      # ── 5. Build primary solution ──────────────────────────────────────────────
-      #       Legacy projects (packages.config detected) use NuGet restore + MSBuild.
-      #       SDK-style projects use dotnet restore + dotnet build.
       - name: Build (${{ inputs.configuration }})
         id: primary-build
         run: |
@@ -123,14 +103,7 @@ jobs:
             exit $LASTEXITCODE
           }
 
-      # ── 6. Build alt configurations ───────────────────────────────────────────
-      #       Reads altConfigs.txt (if present) and builds the primary solution once
-      #       per listed configuration. Format: one org/repo/ConfigName entry per line.
-      #       ZeroCodeTool configs require MSBuild restore; all others use NuGet restore.
-      #       Mirrors altConfigs handling in BHoMBot Core.cs.
-      #
-      #       Note: if step 5 (primary build) fails the job halts there and this step
-      #       never executes — no explicit needs/condition is required.
+      # altConfigs.txt: one org/repo/ConfigName per line; each built with MSBuild. ZeroCodeTool uses msbuild /t:Restore.
       - name: Build alt configurations
         run: |
           if (-not (Test-Path "altConfigs.txt")) {

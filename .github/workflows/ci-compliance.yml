@@ -5,60 +5,45 @@ on:
     inputs:
       dotnet_version:
         type: string
-        required: false
-        default: "8.x"
+        required: true
       configuration:
         type: string
-        required: false
-        default: "Release"
+        required: true
+      run_compliance:
+        type: boolean
+        required: true
       compliance_checks:
         type: string
         required: false
         default: "code copyright documentation project"
-        # Space-separated list of compliance checks to run.
-        # Valid values: code, copyright, documentation, project
-        # Example — code only: "code"
-      run_dataset_check:
+      run_dataset:
         type: boolean
-        required: false
-        default: true
-        # Set to true for repos that contain a datasets/ folder.
-        # Runs IsValidDataset against every changed .json file under datasets/.
+        required: true
     secrets:
       GH_TOKEN:
-        required: false   # PAT for cloning private dependency repositories; falls back to github.token
+        required: false
 
 jobs:
-  # ── Compliance check ──────────────────────────────────────────────────────
   compliance:
+    if: inputs.run_compliance == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: read
-      security-events: write   # required for SARIF upload
-      actions: write            # required for cache save in cross-repo composite actions
+      security-events: write
+      actions: write  # composite action cache
     defaults:
       run:
         shell: pwsh
 
     steps:
-      # Shallow checkout — only enough history to reach the base commit.
-      # fetch-depth:1 + targeted fetch is faster than full history for
-      # large repos, yet gives git diff everything it needs.
       - name: Checkout caller repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # Detect relevant changed files BEFORE any expensive work.
-      # Gates all subsequent heavy steps so PRs that only touch YAML/docs
-      # exit in seconds without building Test_Toolkit at all.
-      #
-      # Uses the exact PR base SHA (not the branch name) with a two-dot
-      # diff to avoid "no merge base" failures on shallow clones.
-      # Three-dot diff (origin/branch...HEAD) requires a common ancestor
-      # in the shallow graph, which is unavailable with fetch-depth:1.
+      # PR diff vs base SHA (two-dot); shallow fetch avoids merge-base issues on fetch-depth:1.
       - name: Compute changed files
         id: changed
         run: |
@@ -68,8 +53,6 @@ jobs:
             exit 0
           }
 
-          # Fetch the exact commit the PR was opened from — depth=1 is enough
-          # because we diff directly against this SHA (no merge-base lookup needed).
           $baseSha = "${{ github.event.pull_request.base.sha }}"
           git fetch --depth=1 origin $baseSha
 
@@ -88,11 +71,7 @@ jobs:
             Write-Host "::notice::No relevant files changed (.cs / .csproj) — skipping compliance."
           }
 
-      # Resolve and build Test_Toolkit + its transitive dependencies.
-      # Skipped entirely when no relevant files changed (saves 3–5 min).
-      # MIGRATION: 'uses:' does not support expressions — org name must be a
-      # literal. Update 'BuroHappoldEngineeringSandbox' to the prod org name
-      # when promoting this workflow to production.
+      # Composite action refs cannot use expressions for org; change BuroHappoldEngineeringSandbox when promoting.
       - name: Resolve dependencies (Test_Toolkit graph)
         if: steps.changed.outputs.count != '0'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
@@ -103,16 +82,12 @@ jobs:
           configuration:  ${{ inputs.configuration }}
           token:          ${{ secrets.GH_TOKEN }}
 
-      # Stage built assemblies to C:\ProgramData\BHoM\Assemblies.
       - name: Stage assemblies to ProgramData\BHoM\Assemblies
         if: steps.changed.outputs.count != '0'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
         with:
           source: deps-assemblies
 
-      # Prepare ComplianceRunner.
-      # Checks out DevOps_Toolkit, restores or builds the runner binary
-      # with SHA-keyed caching, and outputs the exe path.
       - name: Prepare ComplianceRunner
         if: steps.changed.outputs.count != '0'
         id: runner
@@ -123,20 +98,16 @@ jobs:
           configuration:  ${{ inputs.configuration }}
           cache_prefix:   compliance-runner
 
-      # Run each requested compliance check in its own log group.
       - name: Run compliance checks
         id: run_checks
         if: steps.changed.outputs.count != '0'
         run: |
           $runner = "${{ steps.runner.outputs.runner_exe }}"
 
-          # @() ensures a [string[]] even when only one file changed —
-          # prevents PowerShell splatting the string character-by-character.
           $fileList = @(Get-Content changed_files.txt | ForEach-Object { $_ -replace '/', '\' })
 
           $checks = @("${{ inputs.compliance_checks }}" -split ' ' | Where-Object { $_ -ne '' })
 
-          # Repository URL needed by the project compliance check (mirrors BHoMBot).
           $orgUrl = "${{ github.server_url }}/${{ github.repository }}"
 
           Write-Host "::notice title=Compliance checks::Running: $($checks -join ', ')"
@@ -154,7 +125,6 @@ jobs:
             $checkResults.Add(@{ Check=$check; Ok=$ok })
           }
 
-          # SARIF is only meaningful for the 'code' check (Roslyn diagnostics).
           if ($checks -contains "code") {
             Write-Host "::group::SARIF export (code)"
             & $runner code --output sarif --sarif-file compliance.sarif --org-url "$orgUrl" @fileList
@@ -179,7 +149,6 @@ jobs:
             exit 1
           }
 
-      # Upload SARIF results to GitHub Code Scanning.
       - name: Upload SARIF
         if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && always()
         uses: github/codeql-action/upload-sarif@v4
@@ -188,33 +157,26 @@ jobs:
           category:   bhom-compliance-pr-delta
 
 
-  # ── Dataset compliance check ──────────────────────────────────────────────
-  #    Opt-in via run_dataset_check: true — only needed for repos with a
-  #    datasets/ folder. Runs IsValidDataset against every changed .json file
-  #    under any datasets/ path in the PR diff.
+  # Optional: changed JSON under datasets/ only.
   dataset:
-    if: inputs.run_dataset_check
+    if: inputs.run_dataset == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: read
-      security-events: write   # required for SARIF upload
-      actions: write            # required for cache save in cross-repo composite actions
+      security-events: write
+      actions: write
     defaults:
       run:
         shell: pwsh
 
     steps:
-      # Shallow checkout.
       - name: Checkout caller repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # Detect changed dataset files BEFORE any expensive work.
-      # Filters for .json files whose repo-relative path contains /datasets/,
-      # mirroring the IsDatasetFile predicate in DatasetComplianceRunner.cs.
       - name: Compute changed dataset files
         id: changed
         run: |
@@ -245,10 +207,6 @@ jobs:
             Write-Host "::notice::No changed dataset files detected — skipping dataset compliance."
           }
 
-      # Resolve and build Test_Toolkit + its transitive dependencies.
-      # MIGRATION: 'uses:' does not support expressions — org name must be a
-      # literal. Update 'BuroHappoldEngineeringSandbox' to the prod org name
-      # when promoting this workflow to production.
       - name: Resolve dependencies (Test_Toolkit graph)
         if: steps.changed.outputs.count != '0'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
@@ -259,16 +217,12 @@ jobs:
           configuration:  ${{ inputs.configuration }}
           token:          ${{ secrets.GH_TOKEN }}
 
-      # Stage built assemblies to C:\ProgramData\BHoM\Assemblies.
       - name: Stage assemblies to ProgramData\BHoM\Assemblies
         if: steps.changed.outputs.count != '0'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
         with:
           source: deps-assemblies
 
-      # Prepare DatasetComplianceRunner.
-      # Checks out DevOps_Toolkit, restores or builds the runner binary
-      # with SHA-keyed caching, and outputs the exe path.
       - name: Prepare DatasetComplianceRunner
         if: steps.changed.outputs.count != '0'
         id: runner
@@ -279,7 +233,6 @@ jobs:
           configuration:  ${{ inputs.configuration }}
           cache_prefix:   dataset-runner
 
-      # Run dataset compliance.
       - name: Run dataset compliance
         id: run_checks
         if: steps.changed.outputs.count != '0'
@@ -293,7 +246,6 @@ jobs:
           $ok = ($LASTEXITCODE -eq 0)
           Write-Host "::endgroup::"
 
-          # Always export SARIF for dataset results so they appear in Code Scanning.
           Write-Host "::group::SARIF export (dataset)"
           & $runner --output sarif --sarif-file dataset-compliance.sarif @fileList
           $sarifGenerated = ($LASTEXITCODE -eq 0).ToString().ToLower()
@@ -318,7 +270,6 @@ jobs:
             exit 1
           }
 
-      # Upload SARIF results to GitHub Code Scanning.
       - name: Upload SARIF
         if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && always()
         uses: github/codeql-action/upload-sarif@v4

@@ -5,18 +5,10 @@ on:
     inputs:
       dotnet_version:
         type: string
-        required: false
-        default: "8.x"
+        required: true
 
 jobs:
-  # ── Format check ──────────────────────────────────────────────────────────
-  # Runs dotnet format --verify-no-changes only for C# files changed in the PR.
-  # Severity behaviour mirrors the .editorconfig rules:
-  #   error-level diagnostics  → job fails (PR is blocked)
-  #   warning-level diagnostics → job passes with a warning annotation
-  #   suggestion-level          → not reported
-  # The canonical BHoM .editorconfig (DevOps_Toolkit/config/.editorconfig) is applied
-  # automatically by check-format-pr.sh — individual repos do not need their own.
+  # dotnet format on PR diffs only; uses DevOps_Toolkit/.github/scripts/check-format-pr.sh + shared .editorconfig.
   format:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

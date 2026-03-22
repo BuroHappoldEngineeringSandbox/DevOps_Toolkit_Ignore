@@ -11,21 +11,21 @@ on:
         description: "Target year (defaults to current year). Format: YYYY"
 
 concurrency:
-  group: bump-copyright-year
+  group: bump-copyright-year-bhom-engine
   cancel-in-progress: true
+
+env:
+  TARGET_REPO: ${{ github.repository_owner }}/BHoM_Engine
 
 jobs:
   bump:
-    name: Update canonical .editorconfig year
+    name: Update BHoM_Engine .editorconfig copyright year
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: read   # writing happens via bhom-bot token below
+      contents: read
 
     steps:
-      # ── 1. Generate a short-lived token from the bhom-bot GitHub App ─────────
-      #       Must run before checkout so the token is used for the git remote,
-      #       allowing git push to authenticate as 'bhom-bot[bot]'.
       - name: Generate bhom-bot token
         id: app-token
         uses: actions/create-github-app-token@v1
@@ -33,53 +33,44 @@ jobs:
           app-id: ${{ secrets.BHOM_APP_ID }}
           private-key: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+          repositories: BHoM_Engine
 
-      # ── 2. Checkout DevOps_Toolkit using the bhom-bot token ──────────────────
-      #       Passing token here configures the git remote with bhom-bot credentials
-      #       so that git push and gh pr create both authenticate as bhom-bot[bot].
-      - name: Checkout DevOps_Toolkit
+      - name: Checkout BHoM_Engine
         uses: actions/checkout@v4
         with:
+          repository: ${{ env.TARGET_REPO }}
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 1
 
-      # ── 3. Bump the year in config/.editorconfig and open a PR ───────────────
-      - name: Bump copyright year
+      - name: Bump copyright year and open PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          TARGET_YEAR: ${{ inputs.year || '' }}
+          TARGET_YEAR: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.year || '' }}
         run: |
           year="${TARGET_YEAR:-$(date -u +%Y)}"
-          file="config/.editorconfig"
+          file=".editorconfig"
 
-          # Replace only if the year is actually stale (idempotent).
-          if grep -q "2015 - $year" "$file"; then
+          if grep -q "Copyright (c) 2015 - $year" "$file"; then
             echo "::notice::Copyright year is already $year — nothing to do."
             exit 0
           fi
 
           sed -i "s/2015 - [0-9]\{4\}/2015 - $year/g" "$file"
 
-          # Configure git to commit as bhom-bot
           git config user.name  "bhom-bot[bot]"
           git config user.email "bhom-bot[bot]@users.noreply.github.com"
 
           branch="chore/bump-copyright-$year"
 
-          # Idempotent: force-push to update branch if it already exists (keeps any
-          # open PR alive and updated) rather than failing on a duplicate push.
-          # Fetch the branch first so --force-with-lease has a tracking ref to
-          # compare against; without this a fresh CI checkout has no tracking info
-          # for the branch and --force-with-lease rejects the push as "stale info".
           git fetch origin "$branch" 2>/dev/null || true
           git checkout -b "$branch" 2>/dev/null || git checkout "$branch"
           git add "$file"
           git commit -m "chore: bump copyright year to $year"
           git push --force-with-lease origin "$branch"
 
-          # Open a PR only if one is not already open for this branch.
-          pr_body="Automated annual copyright year bump in \`config/.editorconfig\`.\n\nOnce merged, the \`sync-editorconfig\` workflow will distribute the updated file to all repos tagged \`bhom-managed\`."
+          pr_body="Automated annual copyright year bump in \`file_header_template\` (IDE0073) in \`.editorconfig\`."
           existing_pr=$(gh pr list \
+            --repo "${{ env.TARGET_REPO }}" \
             --head "$branch" \
             --state open \
             --json number \
@@ -89,6 +80,7 @@ jobs:
             echo "::notice::PR #$existing_pr already open — branch updated, PR remains."
           else
             pr_url=$(gh pr create \
+              --repo "${{ env.TARGET_REPO }}" \
               --base main \
               --head "$branch" \
               --title "chore: bump copyright year to $year" \

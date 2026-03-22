@@ -1,120 +1,129 @@
-# Orchestrates the reusable CI workflows (Format, Compliance, Build, Unit Tests)
-# after resolving the repository’s BHoM maturity from GitHub topics.
-#
-# Stage → job inputs are defined in .github/config/bhom-stage-matrix.json (edit that file
-# to change checks per stage). Topic precedence: bhom-beta > bhom-alpha > bhom-prototype.
-#
-#   - bhom-prototype — Format + project compliance only
-#   - bhom-alpha     — Format + project compliance + build
-#   - bhom-beta      — Format + full compliance + dataset check + build + unit tests
-#
-# Repositories must expose topics via Settings → General → Topics (REST: GET /repos/{owner}/{repo}/topics).
+# # Runs reusable CI workflows based on repository topics (bhom-prototype | bhom-alpha | bhom-beta).
+# #
+# # Platform (DevOps_Toolkit): bhom-stage-matrix.json — which jobs run per stage and, when
+# # compliance runs, which compliance checks (space-separated: code, copyright, documentation, project).
+# # Per-repo: .github/bhom-ci.json merged over bhom-repo-defaults.json for dotnet_version,
+# # configuration, test_solution, run_dataset_check (unless matrix sets it), coverage flags.
+# # compliance_checks is matrix-only. Optional matrix key run_dataset_check overrides repo for that stage.
+# #
+# # Topic precedence if several are set: bhom-beta > bhom-alpha > bhom-prototype.
+# # Consumer repos: trigger this workflow only (see BHoM_Engine/.github/workflows/ci.yml).
 
-name: Orchestrator
+# name: Orchestrator
 
-on:
-  workflow_call:
-  pull_request:
-  workflow_dispatch:
+# on:
+#   workflow_call:
+#   pull_request:
+#   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+# concurrency:
+#   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+#   cancel-in-progress: true
 
-# Union of permissions required by the called workflows (callers cannot escalate beyond this).
-permissions:
-  actions: write
-  checks: write
-  contents: read
-  pull-requests: write
-  security-events: write
+# permissions:
+#   actions: write
+#   checks: write
+#   contents: read
+#   pull-requests: write
+#   security-events: write
 
-jobs:
-  # ── Resolve bhom-prototype | bhom-alpha | bhom-beta from repo topics ───────
-  resolve-stage:
-    name: Resolve BHoM stage
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      stage: ${{ steps.pick.outputs.stage }}
-      dotnet_version: ${{ steps.pick.outputs.dotnet_version }}
-      unit_dotnet_version: ${{ steps.pick.outputs.unit_dotnet_version }}
-      configuration: ${{ steps.pick.outputs.configuration }}
-      compliance_checks: ${{ steps.pick.outputs.compliance_checks }}
-      run_dataset_check: ${{ steps.pick.outputs.run_dataset_check }}
-      run_coverage: ${{ steps.pick.outputs.run_coverage }}
-      coverage_on_push: ${{ steps.pick.outputs.coverage_on_push }}
-      run_build: ${{ steps.pick.outputs.run_build }}
-      run_unit_tests: ${{ steps.pick.outputs.run_unit_tests }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+# jobs:
+#   resolve-stage:
+#     name: Resolve BHoM stage
+#     runs-on: ubuntu-latest
+#     timeout-minutes: 5
+#     outputs:
+#       stage: ${{ steps.pick.outputs.stage }}
 
-      # Reusable workflow callers may not vendor the matrix; pull Toolkit for the script + JSON.
-      - name: Checkout DevOps_Toolkit (stage matrix)
-        if: hashFiles('.github/config/bhom-stage-matrix.json') == ''
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository_owner }}/DevOps_Toolkit
-          ref: main
-          path: _toolkit
+#       dotnet_version: ${{ steps.pick.outputs.dotnet_version }}
+#       configuration: ${{ steps.pick.outputs.configuration }}
 
-      - name: Resolve topic and workflow inputs
-        id: pick
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f .github/config/bhom-stage-matrix.json ]]; then
-            bash .github/scripts/resolve-bhom-stage.sh
-          else
-            bash _toolkit/.github/scripts/resolve-bhom-stage.sh
-          fi
+#       run_format: ${{ steps.pick.outputs.run_format }}
 
-  format:
-    name: Format
-    needs: resolve-stage
-    uses: ./.github/workflows/ci-format.yml
-    with:
-      dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
+#       run_compliance: ${{ steps.pick.outputs.run_compliance }}
+#       compliance_checks: ${{ steps.pick.outputs.compliance_checks }}
+#       run_dataset_check: ${{ steps.pick.outputs.run_dataset_check }}
 
-  compliance:
-    name: Compliance
-    needs: resolve-stage
-    uses: ./.github/workflows/ci-compliance.yml
-    secrets: inherit
-    with:
-      dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
-      configuration: ${{ needs.resolve-stage.outputs.configuration }}
-      compliance_checks: ${{ needs.resolve-stage.outputs.compliance_checks }}
-      run_dataset_check: ${{ needs.resolve-stage.outputs.run_dataset_check == 'true' }}
+#       test_solution: ${{ steps.pick.outputs.test_solution }}
+#       run_unit_tests: ${{ steps.pick.outputs.run_unit_tests }}
+#       run_coverage: ${{ steps.pick.outputs.run_coverage }}
+#       coverage_on_push: ${{ steps.pick.outputs.coverage_on_push }}
 
-  build:
-    name: Build
-    needs:
-      - resolve-stage
-      - format
-      - compliance
-    if: needs.resolve-stage.outputs.run_build == 'true'
-    uses: ./.github/workflows/ci-build.yml
-    secrets: inherit
-    with:
-      dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
-      configuration: ${{ needs.resolve-stage.outputs.configuration }}
+#       run_build: ${{ steps.pick.outputs.run_build }}
+#     steps:
+#       - name: Checkout repository
+#         uses: actions/checkout@v4
+#         with:
+#           fetch-depth: 1
 
-  unit-tests:
-    name: Unit Tests
-    needs:
-      - resolve-stage
-      - build
-    if: needs.resolve-stage.outputs.run_unit_tests == 'true'
-    uses: ./.github/workflows/ci-unit-tests.yml
-    secrets: inherit
-    with:
-      dotnet_version: ${{ needs.resolve-stage.outputs.unit_dotnet_version }}
-      configuration: ${{ needs.resolve-stage.outputs.configuration }}
-      run_coverage: ${{ needs.resolve-stage.outputs.run_coverage == 'true' }}
-      coverage_on_push: ${{ needs.resolve-stage.outputs.coverage_on_push == 'true' }}
+#       - name: Checkout DevOps_Toolkit
+#         if: hashFiles('.github/config/bhom-stage-matrix.json') == ''
+#         uses: actions/checkout@v4
+#         with:
+#           repository: ${{ github.repository_owner }}/DevOps_Toolkit
+#           ref: main
+#           path: _toolkit
+
+#       - name: Resolve stage and parameters
+#         id: pick
+#         env:
+#           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#         shell: bash
+#         run: |
+#           set -euo pipefail
+#           if [[ -f .github/scripts/resolve-bhom-stage.sh ]]; then
+#             bash .github/scripts/resolve-bhom-stage.sh
+#           else
+#             bash _toolkit/.github/scripts/resolve-bhom-stage.sh
+#           fi
+
+#   format:
+#     name: Format
+#     needs: resolve-stage
+#     if: needs.resolve-stage.outputs.run_format == 'true'
+#     uses: ./.github/workflows/ci-format.yml
+#     with:
+#       dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
+
+#   compliance:
+#     name: Compliance
+#     needs: resolve-stage
+#     if: needs.resolve-stage.outputs.run_compliance == 'true'
+#     uses: ./.github/workflows/ci-compliance.yml
+#     secrets: inherit
+#     with:
+#       dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
+#       configuration: ${{ needs.resolve-stage.outputs.configuration }}
+#       compliance_checks: ${{ needs.resolve-stage.outputs.compliance_checks }}
+#       run_dataset_check: ${{ needs.resolve-stage.outputs.run_dataset_check == 'true' }}
+
+#   build:
+#     name: Build
+#     needs:
+#       - resolve-stage
+#       - format
+#       - compliance
+#     if: |
+#       needs.resolve-stage.outputs.run_build == 'true' &&
+#       (needs.format.result == 'success' || needs.format.result == 'skipped') &&
+#       (needs.compliance.result == 'success' || needs.compliance.result == 'skipped')
+#     uses: ./.github/workflows/ci-build.yml
+#     secrets: inherit
+#     with:
+#       dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
+#       configuration: ${{ needs.resolve-stage.outputs.configuration }}
+
+#   unit-tests:
+#     name: Unit Tests
+#     needs:
+#       - resolve-stage
+#       - build
+#     if: needs.resolve-stage.outputs.run_unit_tests == 'true'
+#     uses: ./.github/workflows/ci-unit-tests.yml
+#     secrets: inherit
+#     with:
+#       dotnet_version: ${{ needs.resolve-stage.outputs.dotnet_version }}
+#       configuration: ${{ needs.resolve-stage.outputs.configuration }}
+#       test_solution: ${{ needs.resolve-stage.outputs.test_solution }}
+#       run_coverage: ${{ needs.resolve-stage.outputs.run_coverage == 'true' }}
+#       coverage_on_push: ${{ needs.resolve-stage.outputs.coverage_on_push == 'true' }}
