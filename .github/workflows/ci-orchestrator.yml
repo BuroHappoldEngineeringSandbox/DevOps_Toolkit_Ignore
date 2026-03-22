@@ -58,7 +58,7 @@ jobs:
       - name: Checkout central .github repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
-          repository: your-org/.github
+          repository: BuroHappooldEngineeringSandbox/.github
           ref: v1
           path: _central
 
@@ -166,7 +166,7 @@ jobs:
     if: |
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_format == 'true'
-    uses: your-org/.github/.github/workflows/ci-format.yml@v1
+    uses: BuroHappoldEngineeringSandbox/.github/.github/workflows/ci-format.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
     secrets:
@@ -177,7 +177,7 @@ jobs:
     if: |
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_compliance == 'true'
-    uses: your-org/.github/.github/workflows/ci-compliance.yml@v1
+    uses: BuroHappoldEngineeringSandbox/.github/.github/workflows/ci-compliance.yml@main
     with:
       dotnet_version:    ${{ needs.setup.outputs.dotnet_version }}
       configuration:     ${{ needs.setup.outputs.configuration }}
@@ -190,7 +190,7 @@ jobs:
     if: |
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_dataset == 'true'
-    uses: your-org/.github/.github/workflows/ci-dataset.yml@v1
+    uses: BuroHappoldEngineeringSandbox/.github/.github/workflows/ci-dataset.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
@@ -202,7 +202,7 @@ jobs:
     if: |
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_build == 'true'
-    uses: your-org/.github/.github/workflows/ci-build.yml@v1
+    uses: BuroHappoldEngineeringSandbox/.github/.github/workflows/ci-build.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
@@ -215,7 +215,7 @@ jobs:
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_unit_tests == 'true' &&
       needs.setup.outputs.test_solution != ''
-    uses: your-org/.github/.github/workflows/ci-unit-tests.yml@v1
+    uses: BuroHappoldEngineeringSandbox/.github/.github/workflows/ci-unit-tests.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
