@@ -11,9 +11,13 @@
 #   warning-level diagnostics → job passes with a warning annotation
 #   suggestion-level          → not reported
 #
+# Multi-solution repos: only the first path when *.sln names are sorted (LC_ALL=C) is used to
+# discover which .csproj entries are “in solution” and as the dotnet format target for in-sln
+# files. Other .sln files are ignored here — document or extend if you need full coverage.
+#
 # Usage: bash check-format-pr.sh
 
-set -e
+set -euo pipefail
 
 # Apply canonical EditorConfig.
 # TOOLKIT_DIR is the path where DevOps_Toolkit was checked out (default: _toolkit).
@@ -33,12 +37,14 @@ if [ ! -f changed_cs_files.txt ]; then
 fi
 
 # Find owning .csproj for each changed file (walk up from file dir until we hit a .csproj).
+# Store newline-separated paths per csproj so paths with spaces are safe to iterate.
 declare -A project_files
 while IFS= read -r file; do
   [ -z "$file" ] && continue
   dir=$(dirname "$file")
   csproj=""
   while [ "$dir" != "." ] && [ "$dir" != "/" ]; do
+    # shellcheck disable=SC2012
     found=$(find "$dir" -maxdepth 1 -name "*.csproj" 2>/dev/null | head -1)
     if [ -n "$found" ]; then
       csproj="$found"
@@ -47,7 +53,11 @@ while IFS= read -r file; do
     dir=$(dirname "$dir")
   done
   if [ -n "$csproj" ]; then
-    project_files["$csproj"]="${project_files[$csproj]:+${project_files[$csproj]} }$file"
+    if [ -n "${project_files[$csproj]+x}" ]; then
+      project_files["$csproj"]="${project_files[$csproj]}"$'\n'"$file"
+    else
+      project_files["$csproj"]="$file"
+    fi
   fi
 done < changed_cs_files.txt
 
@@ -56,17 +66,22 @@ if [ ${#project_files[@]} -eq 0 ]; then
   exit 0
 fi
 
-# Discover solution(s) and which .csproj paths are in them (normalize to forward slashes).
+# One primary .sln (deterministic): sorted basename order, first only. Parse listed .csproj paths
+# (normalize to forward slashes for comparison with find output on Linux agents).
+primary_sln=""
 solution_projects=()
-for sln in *.sln; do
-  [ -f "$sln" ] || continue
-  grep -oE '"[^"]*\.csproj"' "$sln" | tr -d '"' | sed 's|\\|/|g' | sort -u > _sln_projects.txt
-  while IFS= read -r p; do
-    [ -n "$p" ] && solution_projects+=("$p")
-  done < _sln_projects.txt
-  rm -f _sln_projects.txt
-  break
-done
+shopt -s nullglob
+_slns=( *.sln )
+shopt -u nullglob
+if [ ${#_slns[@]} -gt 0 ]; then
+  mapfile -t _sln_candidates < <(printf '%s\n' "${_slns[@]}" | LC_ALL=C sort)
+  primary_sln="${_sln_candidates[0]}"
+  set +o pipefail
+  mapfile -t solution_projects < <(
+    grep -oE '"[^"]*\.csproj"' "$primary_sln" 2>/dev/null | tr -d '"' | sed 's|\\|/|g' | sort -u
+  )
+  set -o pipefail
+fi
 
 any_errors=0
 any_warnings=0
@@ -105,7 +120,8 @@ run_check() {
   fi
 }
 
-# Split: files in a solution project vs files in a project not in the solution.
+# Split: files in a solution project vs files in a project not listed in the primary .sln
+# (e.g. .ci/tests — run format per .csproj).
 solution_include=()
 declare -A outside_solution
 for csproj in "${!project_files[@]}"; do
@@ -114,30 +130,31 @@ for csproj in "${!project_files[@]}"; do
     if [ "$csproj" = "$sp" ]; then in_sln=1; break; fi
   done
   if [ -n "$in_sln" ]; then
-    for f in ${project_files[$csproj]}; do solution_include+=("$f"); done
+    while IFS= read -r f; do
+      [ -z "$f" ] && continue
+      solution_include+=("$f")
+    done <<< "${project_files[$csproj]}"
   else
     outside_solution["$csproj"]="${project_files[$csproj]}"
   fi
 done
 
-# Run against the solution for changed files that belong to solution projects.
-if [ ${#solution_include[@]} -gt 0 ] && [ ${#solution_projects[@]} -gt 0 ]; then
-  sln=$(ls *.sln 2>/dev/null | head -1)
-  if [ -n "$sln" ]; then
-    include_args=()
-    for f in "${solution_include[@]}"; do include_args+=(--include "$f"); done
-    run_check "$sln" "$sln (solution; changed files in solution projects)" "${include_args[@]}"
-  fi
+# Run against the primary solution for changed files that belong to solution projects.
+if [ ${#solution_include[@]} -gt 0 ] && [ ${#solution_projects[@]} -gt 0 ] && [ -n "$primary_sln" ]; then
+  include_args=()
+  for f in "${solution_include[@]}"; do include_args+=(--include "$f"); done
+  run_check "$primary_sln" "$primary_sln (solution; changed files in solution projects)" "${include_args[@]}"
 fi
 
-# Run per project for changed files whose project is NOT in the solution (e.g. .ci test projects).
+# Run per project for changed files whose project is NOT in the primary solution.
 for csproj in "${!outside_solution[@]}"; do
   include_args=()
-  for f in ${outside_solution[$csproj]}; do
-    [ -n "$f" ] && include_args+=(--include "$f")
-  done
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    include_args+=(--include "$f")
+  done <<< "${outside_solution[$csproj]}"
   [ ${#include_args[@]} -eq 0 ] && continue
-  run_check "$csproj" "$csproj (outside solution)" "${include_args[@]}"
+  run_check "$csproj" "$csproj (outside primary solution)" "${include_args[@]}"
 done
 
 if [ "$any_errors" -ne 0 ]; then
