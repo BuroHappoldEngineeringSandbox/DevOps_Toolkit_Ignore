@@ -59,7 +59,7 @@ jobs:
       - name: Checkout central .github repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
-          repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github
+          repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
           ref: main
           path: _central
 
