@@ -59,8 +59,8 @@ jobs:
       - name: Checkout central .github repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
-          repository: BuroHappooldEngineeringSandbox/.github
-          ref: v1
+          repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github
+          ref: main
           path: _central
 
       - name: Validate policy.json
