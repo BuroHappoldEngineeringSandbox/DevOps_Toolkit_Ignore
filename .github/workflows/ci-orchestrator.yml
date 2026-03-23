@@ -72,10 +72,10 @@ jobs:
             exit 1
           fi
 
-          # validate all required states exist
+          # validate all required states exist (bracket keys; e.g. unit-tests is not .unit-tests in jq)
           for state in prototype alpha beta; do
             for key in format compliance compliance_checks dataset build unit-tests; do
-              VALUE=$(jq -r ".$state.$key // \"__missing__\"" $POLICY)
+              VALUE=$(jq -r --arg s "$state" --arg k "$key" '.[$s][$k] // "__missing__"' "$POLICY")
               if [ "$VALUE" == "__missing__" ]; then
                 echo "::error::policy.json missing required key: $state.$key"
                 exit 1
@@ -91,12 +91,12 @@ jobs:
           POLICY="_central/policy.json"
           STATE="${{ steps.topic.outputs.state }}"
 
-          RUN_FORMAT=$(jq -r        ".$STATE.format"            $POLICY)
-          RUN_COMPLIANCE=$(jq -r    ".$STATE.compliance"        $POLICY)
-          COMPLIANCE_CHECKS=$(jq -r ".$STATE.compliance_checks" $POLICY)
-          RUN_DATASET=$(jq -r       ".$STATE.dataset"           $POLICY)
-          RUN_BUILD=$(jq -r         ".$STATE.build"             $POLICY)
-          RUN_UNIT_TESTS=$(jq -r    ".\"$STATE\".\"unit-tests\"" $POLICY)
+          RUN_FORMAT=$(jq -r --arg s "$STATE" '.[$s].format' "$POLICY")
+          RUN_COMPLIANCE=$(jq -r --arg s "$STATE" '.[$s].compliance' "$POLICY")
+          COMPLIANCE_CHECKS=$(jq -r --arg s "$STATE" '.[$s].compliance_checks' "$POLICY")
+          RUN_DATASET=$(jq -r --arg s "$STATE" '.[$s].dataset' "$POLICY")
+          RUN_BUILD=$(jq -r --arg s "$STATE" '.[$s].build' "$POLICY")
+          RUN_UNIT_TESTS=$(jq -r --arg s "$STATE" '.[$s]["unit-tests"]' "$POLICY")
 
           # bhom.json compliance override
           BHOM=".github/bhom.json"

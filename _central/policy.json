@@ -1,27 +1,26 @@
 {
-    "prototype": {
-      "format": true,
-      "compliance": false,
-      "compliance_checks": "copyright project",
-      "dataset": false,
-      "build": false,
-      "unit-tests": false
-    },
-    "alpha": {
-      "format": true,
-      "compliance": true,
-      "compliance_checks": "copyright project",
-      "dataset": false,
-      "build": true,
-      "unit-tests": true
-    },
-    "beta": {
-      "format": true,
-      "compliance": true,
-      "compliance_checks": "code copyright documentation project",
-      "dataset": true,
-      "build": true,
-      "unit-tests": true
-    }
+  "prototype": {
+    "format": true,
+    "compliance": false,
+    "compliance_checks": "copyright project",
+    "dataset": false,
+    "build": false,
+    "unit-tests": false
+  },
+  "alpha": {
+    "format": true,
+    "compliance": true,
+    "compliance_checks": "copyright project",
+    "dataset": false,
+    "build": true,
+    "unit-tests": true
+  },
+  "beta": {
+    "format": true,
+    "compliance": true,
+    "compliance_checks": "code copyright documentation project",
+    "dataset": true,
+    "build": true,
+    "unit-tests": true
   }
-  
+}
