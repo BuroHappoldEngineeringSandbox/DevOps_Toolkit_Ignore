@@ -56,7 +56,7 @@ jobs:
           echo "state=$STATE" >> $GITHUB_OUTPUT
           echo "::notice::Repo state: $STATE"
 
-      - name: Checkout central .github repo
+      - name: Checkout policy (DevOps_Toolkit)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
@@ -68,7 +68,7 @@ jobs:
           POLICY="_central/policy.json"
 
           if [ ! -f "$POLICY" ]; then
-            echo "::error::policy.json not found in central .github repo."
+            echo "::error::policy.json not found at repo root of the policy checkout (DevOps_Toolkit)."
             exit 1
           fi
 
