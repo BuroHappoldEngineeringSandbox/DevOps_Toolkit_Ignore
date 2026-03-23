@@ -5,10 +5,10 @@ set -euo pipefail
 BHOM="${BHOM_PATH:-.github/bhom.json}"
 DOTNET_VERSION="8.0"
 CONFIGURATION="Release"
-TEST_SOLUTION=""
+TEST_SOLUTION=".ci/tests/unitTests/UnitTests.sln"
 
 if [ ! -f "$BHOM" ]; then
-  echo "::notice::No bhom.json found - using orchestrator defaults"
+  echo "::notice::No bhom.json found — using defaults"
 else
   _DOTNET=$(jq -r '.dotnet_version // empty' "$BHOM")
   _CONFIG=$(jq -r '.configuration // empty' "$BHOM")
@@ -26,4 +26,4 @@ fi
 
 echo "::notice::dotnet_version=$DOTNET_VERSION"
 echo "::notice::configuration=$CONFIGURATION"
-echo "::notice::test_solution=${TEST_SOLUTION:-not set}"
+echo "::notice::test_solution=$TEST_SOLUTION"

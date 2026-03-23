@@ -9,7 +9,11 @@ Used by `ci-orchestrator.yml` **after** the `_central` checkout of DevOps_Toolki
 | `policy-contract.sh` | Declares required **states** and **keys** for `policy.json`. Edit here first when extending the contract. |
 | `validate-policy.sh` | Ensures `policy.json` exists and each state object has every required key (`has()`; safe for boolean `false`). |
 | `read-policy.sh` | Reads flags for the current `STATE` (from repo topics) and writes `GITHUB_OUTPUT`. Applies optional `.github/bhom.json` compliance override. |
-| `read-bhom-config.sh` | Dotnet / configuration / test solution defaults and `bhom.json` overrides. |
+| `read-bhom-config.sh` | Dotnet / configuration / test `.sln` path (company default or `bhom.json`). |
+
+## `.github/bhom.json` (optional)
+
+- **`unit_tests.solution`** — relative path to the test solution; if omitted, **`.ci/tests/unitTests/UnitTests.sln`** is used.
 
 ## Changing policy shape
 
