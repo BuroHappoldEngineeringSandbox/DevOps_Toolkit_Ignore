@@ -23,17 +23,19 @@ if [ "$COMPLIANCE_CHECKS" = "null" ]; then
 fi
 
 # Catch jq "null" / missing paths if validation and read ever diverge
-for name val in \
-  run_format "$RUN_FORMAT" \
-  run_compliance "$RUN_COMPLIANCE" \
-  run_dataset "$RUN_DATASET" \
-  run_build "$RUN_BUILD" \
-  run_unit_tests "$RUN_UNIT_TESTS"; do
-  if [ "$val" = "null" ]; then
-    echo "::error::policy.json produced null for $name (state=$STATE)."
+# (Avoid "for a b in" — not POSIX; breaks under dash / some bash builds.)
+check_not_json_null() {
+  local _name="$1" _val="$2"
+  if [ "$_val" = "null" ]; then
+    echo "::error::policy.json produced null for $_name (state=$STATE)."
     exit 1
   fi
-done
+}
+check_not_json_null run_format "$RUN_FORMAT"
+check_not_json_null run_compliance "$RUN_COMPLIANCE"
+check_not_json_null run_dataset "$RUN_DATASET"
+check_not_json_null run_build "$RUN_BUILD"
+check_not_json_null run_unit_tests "$RUN_UNIT_TESTS"
 
 BHOM="${BHOM_PATH:-.github/bhom.json}"
 if [ -f "$BHOM" ]; then
