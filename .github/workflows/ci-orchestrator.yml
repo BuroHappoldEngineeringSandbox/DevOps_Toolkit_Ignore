@@ -72,11 +72,10 @@ jobs:
             exit 1
           fi
 
-          # validate all required states exist (bracket keys; e.g. unit-tests is not .unit-tests in jq)
+          # validate all required keys exist (use has(); jq's // treats false as missing)
           for state in prototype alpha beta; do
             for key in format compliance compliance_checks dataset build unit-tests; do
-              VALUE=$(jq -r --arg s "$state" --arg k "$key" '.[$s][$k] // "__missing__"' "$POLICY")
-              if [ "$VALUE" == "__missing__" ]; then
+              if ! jq -e --arg s "$state" --arg k "$key" '(.[$s] | type == "object") and (.[$s] | has($k))' "$POLICY" >/dev/null; then
                 echo "::error::policy.json missing required key: $state.$key"
                 exit 1
               fi
