@@ -38,6 +38,7 @@ jobs:
           fetch-depth: 1
 
       # Runs before policy checkout; keep inline (scripts live in _central).
+      # Topic precedence when multiple match: beta > alpha > prototype (order of checks below).
       - name: Read GitHub Topic
         id: topic
         env:
@@ -56,15 +57,17 @@ jobs:
             exit 1
           fi
 
-          echo "state=$STATE" >> $GITHUB_OUTPUT
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
           echo "::notice::Repo state: $STATE"
 
+      # Same org default token can read this repo; pass GH_TOKEN if the toolkit is private elsewhere.
       - name: Checkout policy (DevOps_Toolkit)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
           ref: main
           path: _central
+          token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Validate policy.json
         run: bash _central/.github/scripts/orchestrator/validate-policy.sh

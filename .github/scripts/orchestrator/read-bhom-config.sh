@@ -22,7 +22,7 @@ fi
   echo "dotnet_version=$DOTNET_VERSION"
   echo "configuration=$CONFIGURATION"
   echo "test_solution=$TEST_SOLUTION"
-} >> "$GITHUB_OUTPUT"
+} >> "${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"
 
 echo "::notice::dotnet_version=$DOTNET_VERSION"
 echo "::notice::configuration=$CONFIGURATION"

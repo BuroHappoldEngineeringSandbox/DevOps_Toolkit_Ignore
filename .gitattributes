@@ -1,0 +1,2 @@
+# Orchestrator and CI scripts run on Linux; enforce LF so bash/jq behave consistently.
+.github/scripts/**/*.sh text eol=lf
