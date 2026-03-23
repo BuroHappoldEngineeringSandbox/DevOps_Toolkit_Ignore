@@ -6,8 +6,9 @@ on:
       GH_TOKEN:
         required: false
 
+# Under workflow_call, github.workflow is the caller's name; suffix avoids deadlock with caller.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-orchestrator
   cancel-in-progress: true
 
 jobs:

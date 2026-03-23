@@ -15,7 +15,7 @@ on:
         required: false  # optional PAT for private deps; else github.token
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-build
   cancel-in-progress: true
 
 jobs:
