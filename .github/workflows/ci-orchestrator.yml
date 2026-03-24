@@ -132,14 +132,13 @@ jobs:
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
+  # No needs: build — unit-tests workflow resolves deps and builds the test solution itself.
   unit-tests:
-    needs: [setup, build]
+    needs: setup
     if: |
-      always() &&
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_unit_tests == 'true' &&
-      needs.setup.outputs.test_solution != '' &&
-      (needs.build.result == 'success' || needs.build.result == 'skipped')
+      needs.setup.outputs.test_solution != ''
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-unit-tests.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
