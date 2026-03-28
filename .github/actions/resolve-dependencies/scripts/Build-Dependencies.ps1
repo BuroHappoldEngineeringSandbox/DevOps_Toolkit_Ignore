@@ -32,7 +32,6 @@ function Invoke-BHoMBuild {
         dotnet restore $Target
         if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed for $Target" }
 
-        
         dotnet build $Target -c $Config --no-restore --nologo -m
         if ($LASTEXITCODE -ne 0) { throw "dotnet build failed for $Target" }
     }
@@ -64,6 +63,20 @@ foreach ($repoName in $order) {
     $usesPackagesConfig = (Get-ChildItem $repoPath -Recurse -Filter packages.config -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
     $buildType          = if ($usesPackagesConfig) { "MSBuild (legacy)" } else { "dotnet build (SDK)" }
     $buildOk            = $true
+
+    # Migration tracking: detect repos that are partially through legacy → SDK migration.
+    # A repo with packages.config alongside SDK-style .csproj files is using MSBuild for
+    # everything (conservative and correct), but should be flagged so the migration effort
+    # can track remaining work. Once all packages.config files are removed the repo flips
+    # automatically to the dotnet build path on the next run.
+    if ($usesPackagesConfig) {
+        $sdkProjectCount = (Get-ChildItem $repoPath -Recurse -Filter *.csproj -ErrorAction SilentlyContinue |
+            Where-Object { (Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue) -match '<Project\s+Sdk=' } |
+            Measure-Object).Count
+        if ($sdkProjectCount -gt 0) {
+            Write-Host "::notice title=Migration::$repoName is partially migrated — $sdkProjectCount SDK-style project(s) detected alongside packages.config. Building via MSBuild (safe for both). Remove all packages.config files to complete the migration to dotnet build."
+        }
+    }
 
     try {
 

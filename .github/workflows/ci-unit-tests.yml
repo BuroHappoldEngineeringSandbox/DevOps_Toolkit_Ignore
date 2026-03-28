@@ -39,7 +39,18 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Check test solution exists
+        id: test_check
+        run: |
+          if (-not (Test-Path "${{ inputs.test_solution }}")) {
+            Write-Host "::notice::No test solution at '${{ inputs.test_solution }}' — unit tests skipped. Place a solution at that path to enable this check."
+            "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
       - name: Resolve dependencies
+        if: steps.test_check.outputs.skip != 'true'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
         with:
           mode:           caller
@@ -48,19 +59,22 @@ jobs:
           token:          ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Stage assemblies
+        if: steps.test_check.outputs.skip != 'true'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
         with:
           source: deps-assemblies
 
       - name: Restore test solution
+        if: steps.test_check.outputs.skip != 'true'
         run: dotnet restore "${{ inputs.test_solution }}"
 
       - name: Build (${{ inputs.configuration }})
+        if: steps.test_check.outputs.skip != 'true'
         run: dotnet build "${{ inputs.test_solution }}" --no-restore --configuration ${{ inputs.configuration }}
 
-      # TRX + coverage always; job fails at end if tests failed. Cobertura needs .runsettings when present.
       - name: Run tests
         id: test
+        if: steps.test_check.outputs.skip != 'true'
         continue-on-error: true
         run: |
           $solutionDir  = Split-Path "${{ inputs.test_solution }}"

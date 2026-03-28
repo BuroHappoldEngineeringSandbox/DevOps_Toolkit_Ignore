@@ -2,14 +2,6 @@ name: CI Orchestrator
 
 on:
   workflow_call:
-    inputs:
-      # DevOps-only override: pass 'Debug' when you need a debug build across
-      # the full pipeline. Caller repos must NOT supply this input — absence
-      # locks the pipeline to Release (the safe default for production CI).
-      configuration:
-        type: string
-        required: false
-        default: ''
     secrets:
       GH_TOKEN:
         required: false
@@ -19,7 +11,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-orchestrator
   cancel-in-progress: true
 
-# Shell helpers live in this repo at .github/scripts/orchestrator/ (available after _central checkout).
+# Scripts are sourced from _central (DevOps_Toolkit checkout) in the setup job.
 
 jobs:
   setup:
@@ -45,8 +37,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      # Runs before policy checkout; keep inline (scripts live in _central).
-      # Topic precedence when multiple match: beta > alpha > prototype (order of checks below).
+      # Topic precedence when multiple labels match: beta > alpha > prototype.
       - name: Read GitHub Topic
         id: topic
         env:
@@ -86,29 +77,9 @@ jobs:
           STATE: ${{ steps.topic.outputs.state }}
         run: bash _central/.github/scripts/orchestrator/read-policy.sh
 
-      - name: Read bhom.json config
+      - name: Read pipeline config
         id: config
-        env:
-          # DevOps can pass 'Debug' via the configuration input; callers cannot.
-          # The script always defaults to Release; this env var only takes effect
-          # when explicitly set by a DevOps-owned caller workflow.
-          CONFIGURATION_OVERRIDE: ${{ inputs.configuration }}
-        run: |
-          bash _central/.github/scripts/orchestrator/read-bhom-config.sh
-
-          # Apply DevOps-level configuration override after the script runs.
-          if [ -n "$CONFIGURATION_OVERRIDE" ]; then
-            VALID_CONFIGS="Release Debug"
-            if ! echo "$VALID_CONFIGS" | grep -qw "$CONFIGURATION_OVERRIDE"; then
-              echo "::error::Invalid configuration override '$CONFIGURATION_OVERRIDE'. Valid values: Release, Debug"
-              exit 1
-            fi
-            echo "configuration=$CONFIGURATION_OVERRIDE" >> "$GITHUB_OUTPUT"
-            echo "::notice::configuration overridden by DevOps input: $CONFIGURATION_OVERRIDE"
-          else
-            echo "configuration=Release" >> "$GITHUB_OUTPUT"
-            echo "::notice::configuration=Release (locked default)"
-          fi
+        run: bash _central/.github/scripts/orchestrator/read-bhom-config.sh
 
   # ── Jobs ────────────────────────────────────────────────────────────────────
 
@@ -160,13 +131,12 @@ jobs:
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
-  # No needs: build — unit-tests workflow resolves deps and builds the test solution itself.
+  # Unit-tests resolves its own deps and builds the test solution independently of ci-build.
   unit-tests:
     needs: setup
     if: |
       needs.setup.result == 'success' &&
-      needs.setup.outputs.run_unit_tests == 'true' &&
-      needs.setup.outputs.test_solution != ''
+      needs.setup.outputs.run_unit_tests == 'true'
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-unit-tests.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
