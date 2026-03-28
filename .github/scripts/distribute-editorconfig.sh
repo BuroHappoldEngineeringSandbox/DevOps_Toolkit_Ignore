@@ -53,7 +53,7 @@ while IFS= read -r repo; do
   TARGET_DIR="targets/$repo"
   rm -rf "$TARGET_DIR"
 
-  if ! gh repo clone "$ORG/$repo" "$TARGET_DIR" -- --depth=1 --quiet; then
+  if ! gh repo clone "$ORG/$repo" "$TARGET_DIR" -- --depth=1 --branch develop --quiet; then
     echo "::error::Failed to clone $ORG/$repo"
     FAILURES+=("$repo")
     echo "::endgroup::"
