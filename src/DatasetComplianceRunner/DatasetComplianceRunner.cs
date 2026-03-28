@@ -60,7 +60,6 @@ class DatasetComplianceRunner
 
             var information        = resultForThisFile.Information ?? Enumerable.Empty<ITestInformation>();
             var perFileAnnotations = information
-                .Where(i => i is BH.oM.Test.CodeCompliance.Error)
                 .Select(i => i.ToAnnotationEquivalent())
                 .ToList();
             var infoList = information.ToList();

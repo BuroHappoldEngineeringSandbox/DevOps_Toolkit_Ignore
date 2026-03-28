@@ -107,8 +107,8 @@ jobs:
 
           Write-Host "::group::SARIF export (dataset)"
           & $runner --output sarif --sarif-file dataset-compliance.sarif @fileList
-          $sarifGenerated = ($LASTEXITCODE -eq 0).ToString().ToLower()
           Write-Host "::endgroup::"
+          $sarifGenerated = (Test-Path "dataset-compliance.sarif").ToString().ToLower()
 
           "sarif_generated=$sarifGenerated" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 

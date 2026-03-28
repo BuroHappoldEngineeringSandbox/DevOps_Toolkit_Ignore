@@ -121,12 +121,14 @@ jobs:
             $checkResults.Add(@{ Check=$check; Ok=$ok })
           }
 
-          if ($checks -contains "code") {
-            Write-Host "::group::SARIF export (code)"
-            & $runner code --output sarif --sarif-file compliance.sarif --org-url "$orgUrl" @fileList
-            if ($LASTEXITCODE -eq 0) { $sarifGenerated = "true" }
+          $sarifDir = "compliance-sarifs"
+          New-Item -ItemType Directory -Force -Path $sarifDir | Out-Null
+          foreach ($check in $checks) {
+            Write-Host "::group::SARIF export ($check)"
+            & $runner $check --output sarif --sarif-file "$sarifDir\compliance-$check.sarif" --org-url "$orgUrl" @fileList
             Write-Host "::endgroup::"
           }
+          $sarifGenerated = ((Get-ChildItem $sarifDir -Filter "*.sarif" -ErrorAction SilentlyContinue).Count -gt 0).ToString().ToLower()
 
           "sarif_generated=$sarifGenerated" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
@@ -149,5 +151,5 @@ jobs:
         if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && always()
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: compliance.sarif
+          sarif_file: compliance-sarifs/
           category:   bhom-compliance-pr-delta
