@@ -79,7 +79,7 @@ jobs:
 
       - name: Read pipeline config
         id: config
-        run: bash _central/.github/scripts/orchestrator/read-bhom-config.sh
+        run: bash _central/.github/scripts/orchestrator/pipeline-defaults.sh
 
   # ── Jobs ────────────────────────────────────────────────────────────────────
 
