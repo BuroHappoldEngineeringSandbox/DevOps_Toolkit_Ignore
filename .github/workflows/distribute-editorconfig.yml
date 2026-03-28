@@ -1,0 +1,85 @@
+name: Distribute .editorconfig
+
+# Triggers whenever config/.editorconfig changes on main, distributing the
+# updated file to every active BHoM repo that carries a bhom-* topic.
+# PRs are opened as the DevOps GitHub App and auto-merge once CI passes.
+# Run workflow_dispatch with dry_run=true to preview affected repos without
+# opening any PRs.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'config/.editorconfig'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — list affected repos without opening PRs'
+        type: boolean
+        required: false
+        default: false
+
+# Never cancel a distribution mid-flight; a partial run leaves repos in
+# inconsistent states. A new push will supersede once this run finishes.
+concurrency:
+  group: distribute-editorconfig
+  cancel-in-progress: false
+
+jobs:
+  distribute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read  # DevOps_Toolkit checkout only; target repo writes use app token.
+
+    steps:
+      - name: Checkout DevOps_Toolkit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 1
+
+      # Generates a short-lived installation token (1 h) scoped to the org.
+      # Required secrets (set at org level in DevOps_Toolkit):
+      #   BHOM_APP_ID          — GitHub App ID (numeric, from App settings page)
+      #   BHOM_APP_PRIVATE_KEY — PEM private key generated for the App
+      #
+      # The App needs these permissions installed on each target repo:
+      #   Repository: Contents (read & write), Pull requests (read & write)
+      #
+      # Pin this action to a SHA once you have verified the correct version:
+      #   actions/create-github-app-token@<SHA>
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BHOM_APP_ID }}
+          private-key: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Resolve target repos
+        id: repos
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ORG: ${{ github.repository_owner }}
+        run: |
+          # Collect repos tagged with any BHoM stage topic.
+          # The search API is used per-topic then deduplicated to avoid
+          # complex query syntax and ensure full pagination coverage.
+          for topic in bhom-prototype bhom-alpha bhom-beta; do
+            gh api "search/repositories?q=org:${ORG}+topic:${topic}&per_page=100" \
+              --paginate \
+              --jq '.items[] | select(.archived == false) | .name'
+          done \
+            | sort -u \
+            | grep -v "^DevOps_Toolkit$" \
+            > repo-list.txt
+
+          COUNT=$(wc -l < repo-list.txt | tr -d ' ')
+          echo "::notice::${COUNT} target repo(s) found."
+
+      - name: Distribute
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ORG: ${{ github.repository_owner }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        run: bash .github/scripts/distribute-editorconfig.sh repo-list.txt
