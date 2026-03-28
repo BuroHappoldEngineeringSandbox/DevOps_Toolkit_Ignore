@@ -10,7 +10,7 @@ inputs:
   dotnet_version:
     description: ".NET SDK version spec"
     required: false
-    default: "10.x"
+    default: "8.0"
 
   configuration:
     description: "Build configuration (Release/Debug)"

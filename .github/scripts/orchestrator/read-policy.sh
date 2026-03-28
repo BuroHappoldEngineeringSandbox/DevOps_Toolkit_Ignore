@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Read policy for STATE and write job outputs; optional bhom.json compliance override.
+# Read policy for STATE and write job outputs.
+# Compliance checks are owned entirely by policy.json — caller repos cannot override them.
 set -euo pipefail
 
 POLICY="${POLICY_PATH:-_central/policy.json}"
@@ -36,23 +37,6 @@ check_not_json_null run_compliance "$RUN_COMPLIANCE"
 check_not_json_null run_dataset "$RUN_DATASET"
 check_not_json_null run_build "$RUN_BUILD"
 check_not_json_null run_unit_tests "$RUN_UNIT_TESTS"
-
-BHOM="${BHOM_PATH:-.github/bhom.json}"
-if [ -f "$BHOM" ]; then
-  OVERRIDE=$(jq -r '.compliance.checks // empty' "$BHOM")
-  if [ -n "$OVERRIDE" ]; then
-    VALID="project code copyright documentation"
-    # shellcheck disable=SC2086
-    for check in $OVERRIDE; do
-      if ! echo "$VALID" | grep -qw "$check"; then
-        echo "::error::Invalid compliance check in bhom.json: '$check'. Valid values: $VALID"
-        exit 1
-      fi
-    done
-    COMPLIANCE_CHECKS="$OVERRIDE"
-    echo "::notice::Compliance checks overridden by bhom.json: $COMPLIANCE_CHECKS"
-  fi
-fi
 
 {
   echo "run_format=$RUN_FORMAT"

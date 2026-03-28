@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: Checkout caller repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           fetch-depth: 1
 
@@ -74,7 +74,7 @@ jobs:
           seeds:          BHoM/Test_Toolkit
           dotnet_version: ${{ inputs.dotnet_version }}
           configuration:  ${{ inputs.configuration }}
-          token:          ${{ secrets.GH_TOKEN }}
+          token:          ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Stage assemblies to ProgramData\BHoM\Assemblies
         if: steps.changed.outputs.count != '0'

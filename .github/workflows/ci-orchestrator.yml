@@ -2,6 +2,14 @@ name: CI Orchestrator
 
 on:
   workflow_call:
+    inputs:
+      # DevOps-only override: pass 'Debug' when you need a debug build across
+      # the full pipeline. Caller repos must NOT supply this input — absence
+      # locks the pipeline to Release (the safe default for production CI).
+      configuration:
+        type: string
+        required: false
+        default: ''
     secrets:
       GH_TOKEN:
         required: false
@@ -80,7 +88,27 @@ jobs:
 
       - name: Read bhom.json config
         id: config
-        run: bash _central/.github/scripts/orchestrator/read-bhom-config.sh
+        env:
+          # DevOps can pass 'Debug' via the configuration input; callers cannot.
+          # The script always defaults to Release; this env var only takes effect
+          # when explicitly set by a DevOps-owned caller workflow.
+          CONFIGURATION_OVERRIDE: ${{ inputs.configuration }}
+        run: |
+          bash _central/.github/scripts/orchestrator/read-bhom-config.sh
+
+          # Apply DevOps-level configuration override after the script runs.
+          if [ -n "$CONFIGURATION_OVERRIDE" ]; then
+            VALID_CONFIGS="Release Debug"
+            if ! echo "$VALID_CONFIGS" | grep -qw "$CONFIGURATION_OVERRIDE"; then
+              echo "::error::Invalid configuration override '$CONFIGURATION_OVERRIDE'. Valid values: Release, Debug"
+              exit 1
+            fi
+            echo "configuration=$CONFIGURATION_OVERRIDE" >> "$GITHUB_OUTPUT"
+            echo "::notice::configuration overridden by DevOps input: $CONFIGURATION_OVERRIDE"
+          else
+            echo "configuration=Release" >> "$GITHUB_OUTPUT"
+            echo "::notice::configuration=Release (locked default)"
+          fi
 
   # ── Jobs ────────────────────────────────────────────────────────────────────
 
@@ -93,7 +121,7 @@ jobs:
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
     secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
   compliance:
     needs: setup
@@ -106,7 +134,7 @@ jobs:
       configuration:     ${{ needs.setup.outputs.configuration }}
       compliance_checks: ${{ needs.setup.outputs.compliance_checks }}
     secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
   dataset:
     needs: setup
@@ -118,7 +146,7 @@ jobs:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
     secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
   build:
     needs: setup
@@ -130,7 +158,7 @@ jobs:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
     secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
   # No needs: build — unit-tests workflow resolves deps and builds the test solution itself.
   unit-tests:
@@ -145,4 +173,4 @@ jobs:
       configuration:  ${{ needs.setup.outputs.configuration }}
       test_solution:  ${{ needs.setup.outputs.test_solution }}
     secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}

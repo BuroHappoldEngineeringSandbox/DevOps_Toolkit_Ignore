@@ -16,16 +16,32 @@ runs:
     - name: Stage assemblies
       shell: pwsh
       run: |
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+        
         $src = "${{ inputs.source }}"
         if (-not (Test-Path $src)) {
-          Write-Host "⚠ No assemblies found at: $src"
+          Write-Host "::warning::No assemblies directory found at: $src - skipping stage step."
+          exit 0
+        }
+        $dlls = Get-ChildItem $src -Filter *.dll -ErrorAction SilentlyContinue
+        if ($dlls.Count -eq 0) {
+          Write-Host "::warning::No dlls found in: $src - assembly staging produced no output."
           exit 0
         }
 
         $dst = Join-Path $env:ProgramData "BHoM\Assemblies"
         New-Item -ItemType Directory -Force -Path $dst | Out-Null
-        
-        Copy-Item "$src\*.dll" $dst -Force -ErrorAction SilentlyContinue
 
-        Write-Host "📦 Staged assemblies into $dst"
+        foreach ($dll in $dlls) {
+          Copy-Item $dll.FullName $dst -Force
+        }
+
+        $stagedCount = (Get-ChildItem $dst -Filter *.dll -ErrorAction SilentlyContinue).Count
+        if ($stagedCount -eq 0) {
+          Write-Host "::error::Copy appeared to succeed but no DLLs found in $dst after staging."
+          exit 1
+        }
+
+        Write-Host "Staged $($dlls.Count) assemblies into $dst"
         Get-ChildItem $dst -Filter *.dll | Sort-Object Name
