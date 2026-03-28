@@ -147,9 +147,38 @@ jobs:
             exit 1
           }
 
-      - name: Upload SARIF
+      - name: Upload SARIF (per check)
         if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && always()
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: compliance-sarifs/
-          category:   bhom-compliance-pr-delta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $repo = "${{ github.repository }}"
+          $ref  = "${{ github.ref }}"
+          $sha  = "${{ github.sha }}"
+
+          foreach ($sarifFile in Get-ChildItem compliance-sarifs -Filter "*.sarif" -ErrorAction SilentlyContinue) {
+            $checkName = $sarifFile.BaseName -replace '^compliance-', ''
+            $category  = "bhom-compliance-$checkName-pr-delta"
+
+            # gzip + base64 — required format for the code-scanning SARIF upload API
+            $bytes   = [System.IO.File]::ReadAllBytes($sarifFile.FullName)
+            $ms      = [System.IO.MemoryStream]::new()
+            $gz      = [System.IO.Compression.GZipStream]::new($ms, [System.IO.Compression.CompressionMode]::Compress)
+            $gz.Write($bytes, 0, $bytes.Length)
+            $gz.Close()
+            $encoded = [System.Convert]::ToBase64String($ms.ToArray())
+
+            gh api "repos/$repo/code-scanning/sarifs" `
+              -X POST `
+              --field "sarif=$encoded" `
+              --field "ref=$ref" `
+              --field "commit_sha=$sha" `
+              --field "tool_name=BHoM Compliance - $checkName" `
+              --field "category=$category"
+
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::warning::SARIF upload failed for check: $checkName"
+            } else {
+              Write-Host "Uploaded SARIF for check: $checkName (category: $category)"
+            }
+          }
