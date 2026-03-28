@@ -38,6 +38,11 @@ fi
 
 git config --global user.name  "bhom-devops[bot]"
 git config --global user.email "bhom-devops[bot]@users.noreply.github.com"
+# Configure git to use the app token for HTTPS authentication.
+# gh CLI handles auth via GH_TOKEN automatically; git push requires
+# the credential to be embedded in the remote URL explicitly.
+git config --global credential.helper \
+  '!f() { echo "username=x-access-token"; echo "password=${GH_TOKEN}"; }; f'
 
 mkdir -p targets
 
@@ -71,6 +76,7 @@ while IFS= read -r repo; do
 
   # Run in a subshell so a failure can be caught without exiting the loop.
   (
+    set -euo pipefail
     cd "$TARGET_DIR"
 
     git checkout -B "$BRANCH"
