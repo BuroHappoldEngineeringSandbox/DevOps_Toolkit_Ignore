@@ -194,4 +194,4 @@ jobs:
       - name: Publish test results
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
-          trx_files: "test-results/**/*.trx"
+          files: "test-results/**/*.trx"
