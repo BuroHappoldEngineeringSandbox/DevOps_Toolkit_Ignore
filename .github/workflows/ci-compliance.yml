@@ -160,8 +160,22 @@ jobs:
             $checkName = $sarifFile.BaseName -replace '^compliance-', ''
             $category  = "bhom-compliance-$checkName-pr-delta"
 
+            # Inject automationDetails.id so GitHub code-scanning treats each check
+            # as a distinct tool run. "category" is not an API field — it is conveyed
+            # inside the SARIF payload via runs[].automationDetails.id.
+            $sarifJson = Get-Content $sarifFile.FullName -Raw | ConvertFrom-Json -Depth 20
+            foreach ($run in $sarifJson.runs) {
+              if ($null -eq $run.PSObject.Properties["automationDetails"]) {
+                $run | Add-Member -NotePropertyName "automationDetails" `
+                                  -NotePropertyValue ([pscustomobject]@{ id = $category }) -Force
+              } else {
+                $run.automationDetails.id = $category
+              }
+            }
+            $patchedSarif = $sarifJson | ConvertTo-Json -Depth 20 -Compress
+
             # gzip + base64 — required format for the code-scanning SARIF upload API
-            $bytes   = [System.IO.File]::ReadAllBytes($sarifFile.FullName)
+            $bytes   = [System.Text.Encoding]::UTF8.GetBytes($patchedSarif)
             $ms      = [System.IO.MemoryStream]::new()
             $gz      = [System.IO.Compression.GZipStream]::new($ms, [System.IO.Compression.CompressionMode]::Compress)
             $gz.Write($bytes, 0, $bytes.Length)
@@ -173,8 +187,7 @@ jobs:
               --field "sarif=$encoded" `
               --field "ref=$ref" `
               --field "commit_sha=$sha" `
-              --field "tool_name=BHoM Compliance - $checkName" `
-              --field "category=$category"
+              --field "tool_name=BHoM Compliance - $checkName"
 
             if ($LASTEXITCODE -ne 0) {
               Write-Host "::warning::SARIF upload failed for check: $checkName"
