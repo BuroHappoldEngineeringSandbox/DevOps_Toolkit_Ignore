@@ -189,7 +189,10 @@ while IFS= read -r repo; do
     git add "$CODEOWNERS_PATH"
     git commit -m "chore: sync CODEOWNERS from team assignments"
 
-    git push origin "$BRANCH"
+    # --force is safe: this branch is exclusively owned by this workflow.
+    # Force-pushing also invalidates stale approvals on same-day re-runs
+    # where team assignments may have changed since the last push.
+    git push origin "$BRANCH" --force
 
     # Close any open PRs from older datestamped branches before opening a
     # fresh one, so stale approvals cannot carry forward to new content.
@@ -200,13 +203,24 @@ while IFS= read -r repo; do
       --jq ".[] | select(.headRefName | startswith(\"${BRANCH_PREFIX}\")) | select(.headRefName != \"${BRANCH}\") | .number" \
     | xargs -r -I{} gh pr close {} --repo "$ORG/$repo" --comment "Superseded by a newer sync run."
 
-    TEAM_LIST="${ASSIGNED_TEAMS[*]:-none}"
-    PR_URL=$(gh pr create \
+    # Check if a PR already exists for today's branch (same-day re-run).
+    EXISTING_PR=$(gh pr list \
       --repo "$ORG/$repo" \
+      --state open \
       --head "$BRANCH" \
-      --base develop \
-      --title "chore: sync CODEOWNERS from team assignments" \
-      --body "Automated update of \`.github/CODEOWNERS\` to reflect current GitHub team assignments.
+      --json url \
+      --jq '.[0].url // empty')
+
+    TEAM_LIST="${ASSIGNED_TEAMS[*]:-none}"
+    if [ -n "$EXISTING_PR" ]; then
+      echo "::notice::Branch updated on existing PR: $EXISTING_PR"
+    else
+      PR_URL=$(gh pr create \
+        --repo "$ORG/$repo" \
+        --head "$BRANCH" \
+        --base develop \
+        --title "chore: sync CODEOWNERS from team assignments" \
+        --body "Automated update of \`.github/CODEOWNERS\` to reflect current GitHub team assignments.
 
 **Assigned product team(s):** \`${TEAM_LIST}\`
 
@@ -214,8 +228,8 @@ This PR was opened by the [Sync CODEOWNERS](https://github.com/${ORG}/DevOps_Too
 
 > [!NOTE]
 > The \`.github/\` folder is owned by \`@${ORG}/${PLATFORM_TEAM}\` — platform team approval is required to merge.")
-
-    echo "::notice::PR opened: $PR_URL"
+      echo "::notice::PR opened: $PR_URL"
+    fi
   ) || {
     echo "::error::Failed to update $repo"
     FAILURES+=("$repo")
