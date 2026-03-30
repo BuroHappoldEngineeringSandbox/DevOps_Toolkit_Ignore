@@ -52,9 +52,12 @@ git config --global credential.helper \
 # team (which is always written to the /.github/ line separately).
 get_product_teams() {
   local repo="$1"
-  gh api "repos/${ORG}/${repo}/teams" --paginate \
-    --jq "[.[] | .slug] | map(select(. != \"${PLATFORM_TEAM}\")) | sort | .[]" \
-    2>/dev/null || true
+  local out
+  if ! out=$(gh api "repos/${ORG}/${repo}/teams" --paginate 2>&1); then
+    echo "::error::Failed to query teams for ${repo}: ${out}" >&2
+    return 1
+  fi
+  echo "$out" | jq -r "[.[] | .slug] | map(select(. != \"${PLATFORM_TEAM}\")) | sort | .[]"
 }
 
 # Generates the expected CODEOWNERS content for a repo.
@@ -85,6 +88,17 @@ generate_codeowners() {
 }
 
 mkdir -p targets
+
+# ── Preflight: verify the App token can query repo teams ─────────────────────
+# This endpoint requires Organisation > Members: Read on the App installation.
+# Fail fast here rather than silently mishandling 403s across every repo.
+echo "Checking App token has permission to query repository teams..."
+if ! gh api "repos/${ORG}/DevOps_Toolkit/teams" --paginate > /dev/null 2>&1; then
+  echo "::error::The App token cannot access repo team assignments (GET /repos/{org}/{repo}/teams)."
+  echo "::error::Grant 'Organisation > Members: Read' to the GitHub App installation and re-run."
+  exit 1
+fi
+echo "Permission check passed."
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
