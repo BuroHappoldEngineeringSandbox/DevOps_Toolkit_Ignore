@@ -9,8 +9,12 @@
 #   DRY_RUN       — 'true' to log intended changes without opening PRs
 #   PLATFORM_TEAM — slug of the platform team (default: platform)
 #
+# Team membership is fully dynamic — all teams assigned to a repo in GitHub
+# are written into CODEOWNERS (except the platform team, which is always
+# written to the /.github/ line separately). No team list is hardcoded here.
+#
 # Behaviour per repo:
-#   - Queries GitHub for which product teams are assigned to the repo.
+#   - Queries GitHub for all teams assigned to the repo.
 #   - Generates the expected CODEOWNERS content from those assignments.
 #   - Skips if the repo's CODEOWNERS already matches the expected content.
 #   - Creates branch governance/sync-codeowners-YYYY-MM-DD (datestamped to
@@ -28,18 +32,6 @@ ORG="${ORG:?ORG must be set}"
 PLATFORM_TEAM="${PLATFORM_TEAM:-platform}"
 CODEOWNERS_PATH=".github/CODEOWNERS"
 
-# Slugs of the product teams that are eligible to appear in CODEOWNERS.
-# Any other team assigned to a repo (e.g. bots, external collaborators)
-# is ignored.
-PRODUCT_TEAMS=(
-  "data-and-ai"
-  "bim"
-  "specialist-consulting"
-  "structures"
-  "sustainability-physics"
-  "prototypes"
-)
-
 SKIPPED=0
 UPDATED=0
 FAILURES=()
@@ -56,11 +48,12 @@ git config --global credential.helper \
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-# Returns a space-separated sorted list of product team slugs assigned to $1.
+# Returns a sorted list of team slugs assigned to $1, excluding the platform
+# team (which is always written to the /.github/ line separately).
 get_product_teams() {
   local repo="$1"
   gh api "repos/${ORG}/${repo}/teams" --paginate \
-    --jq '[.[] | .slug] | map(select(. as $s | '"$(printf '"%s",' "${PRODUCT_TEAMS[@]}" | sed 's/,$//')"' | index($s) != null)) | sort | .[]' \
+    --jq "[.[] | .slug] | map(select(. != \"${PLATFORM_TEAM}\")) | sort | .[]" \
     2>/dev/null || true
 }
 
