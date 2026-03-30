@@ -10,15 +10,17 @@
 #
 # Behaviour per repo:
 #   - Skips if the repo's .editorconfig already matches the canonical file.
-#   - Creates/resets branch devops/update-editorconfig, copies the file,
-#     opens a PR targeting main, and enables auto-merge (squash).
-#   - If a PR for the branch already exists, updates the branch in place.
+#   - Creates branch devops/update-editorconfig-YYYY-MM-DD (datestamped to
+#     prevent stale approvals from carrying over if the branch is re-pushed).
+#   - Closes any open PRs targeting older devops/update-editorconfig-* branches
+#     before opening a fresh PR for the new branch.
 #   - Failures are collected and reported at the end without stopping the loop.
 set -euo pipefail
 
 REPO_FILE="${1:?Usage: distribute-editorconfig.sh <repo-list-file>}"
 CANONICAL_ABS="$(pwd)/config/.editorconfig"
-BRANCH="devops/update-editorconfig"
+BRANCH="devops/update-editorconfig-$(date +%Y-%m-%d)"
+BRANCH_PREFIX="devops/update-editorconfig-"
 DRY_RUN="${DRY_RUN:-false}"
 ORG="${ORG:?ORG must be set}"
 
@@ -79,40 +81,37 @@ while IFS= read -r repo; do
     set -euo pipefail
     cd "$TARGET_DIR"
 
-    git checkout -B "$BRANCH"
+    git checkout -b "$BRANCH"
     cp "$CANONICAL_ABS" .editorconfig
     git add .editorconfig
     git commit -m "chore: update .editorconfig from DevOps_Toolkit"
 
-    # --force is safe here: this branch is exclusively owned by this workflow.
-    git push origin "$BRANCH" --force
+    git push origin "$BRANCH"
 
-    EXISTING=$(gh pr list \
+    # Close any open PRs from previous runs (older datestamped branches)
+    # before opening a fresh one, to avoid accumulating stale PRs.
+    gh pr list \
+      --repo "$ORG/$repo" \
+      --state open \
+      --json number,headRefName \
+      --jq ".[] | select(.headRefName | startswith(\"${BRANCH_PREFIX}\")) | select(.headRefName != \"${BRANCH}\") | .number" \
+    | xargs -r -I{} gh pr close {} --repo "$ORG/$repo" --comment "Superseded by a newer sync run."
+
+    PR_URL=$(gh pr create \
       --repo "$ORG/$repo" \
       --head "$BRANCH" \
-      --json number \
-      --jq '.[0].number // empty')
+      --base develop \
+      --title "chore: update .editorconfig" \
+      --body "Automated update of \`.editorconfig\` from [DevOps_Toolkit](https://github.com/${ORG}/DevOps_Toolkit/blob/main/config/.editorconfig).
 
-    if [ -z "$EXISTING" ]; then
-      PR_URL=$(gh pr create \
-        --repo "$ORG/$repo" \
-        --head "$BRANCH" \
-        --base develop \
-        --title "chore: update .editorconfig" \
-        --body "Automated update of \`.editorconfig\` from [DevOps_Toolkit](https://github.com/${ORG}/DevOps_Toolkit/blob/main/config/.editorconfig).
-
-Formatting rules are managed centrally in DevOps_Toolkit. This PR was opened automatically and will **auto-merge once CI passes**.
+Formatting rules are managed centrally in DevOps_Toolkit. This PR was opened automatically.
 
 To fix formatting issues locally before opening a PR:
 \`\`\`bash
 dotnet format
 \`\`\`")
 
-      gh pr merge --repo "$ORG/$repo" "$PR_URL" --auto --squash
-      echo "::notice::PR opened with auto-merge enabled: $PR_URL"
-    else
-      echo "::notice::PR #$EXISTING already exists — branch updated."
-    fi
+    echo "::notice::PR opened: $PR_URL"
   ) || {
     echo "::error::Failed to update $repo"
     FAILURES+=("$repo")
