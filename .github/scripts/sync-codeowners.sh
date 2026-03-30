@@ -9,9 +9,10 @@
 #   DRY_RUN       — 'true' to log intended changes without opening PRs
 #   PLATFORM_TEAM — slug of the platform team (default: platform)
 #
-# Team membership is fully dynamic — all teams assigned to a repo in GitHub
-# are written into CODEOWNERS (except the platform team, which is always
-# written to the /.github/ line separately). No team list is hardcoded here.
+# Team membership is fully dynamic — the script builds a repo→teams map by
+# querying each team's repo list (GET /orgs/{org}/teams/{slug}/repos), which
+# requires only Organisation > Members: Read. This avoids GET /repos/{org}/{repo}/teams
+# which additionally requires Repository Administration read.
 #
 # Behaviour per repo:
 #   - Queries GitHub for all teams assigned to the repo.
@@ -35,6 +36,9 @@ CODEOWNERS_PATH=".github/CODEOWNERS"
 SKIPPED=0
 UPDATED=0
 FAILURES=()
+# Associative array: repo name → space-separated sorted team slugs.
+# Populated by build_repo_teams_map() before the main loop.
+declare -A REPO_TEAMS
 
 if [ ! -f "$REPO_FILE" ]; then
   echo "::error::Repo list file not found: $REPO_FILE"
@@ -48,16 +52,43 @@ git config --global credential.helper \
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-# Returns a sorted list of team slugs assigned to $1, excluding the platform
-# team (which is always written to the /.github/ line separately).
+# Builds REPO_TEAMS by iterating every org team (except platform) and recording
+# which repos each team has access to. Uses GET /orgs/{org}/teams and
+# GET /orgs/{org}/teams/{slug}/repos — both covered by Members: Read.
+build_repo_teams_map() {
+  echo "Fetching org teams..."
+  local all_teams
+  if ! all_teams=$(gh api "orgs/${ORG}/teams" --paginate \
+    --jq "[.[] | .slug] | map(select(. != \"${PLATFORM_TEAM}\")) | .[]" 2>&1); then
+    echo "::error::Failed to list org teams: ${all_teams}"
+    exit 1
+  fi
+
+  local team_count=0
+  while IFS= read -r slug; do
+    [ -z "$slug" ] && continue
+    team_count=$((team_count + 1))
+    local repos
+    repos=$(gh api "orgs/${ORG}/teams/${slug}/repos" --paginate \
+      --jq '.[].name' 2>/dev/null || true)
+    while IFS= read -r repo_name; do
+      [ -z "$repo_name" ] && continue
+      if [ -z "${REPO_TEAMS[$repo_name]+_}" ]; then
+        REPO_TEAMS[$repo_name]="$slug"
+      else
+        # Keep entries sorted; append and re-sort.
+        REPO_TEAMS[$repo_name]=$(echo -e "${REPO_TEAMS[$repo_name]}\n${slug}" | sort | tr '\n' ' ' | sed 's/ $//')
+      fi
+    done <<< "$repos"
+  done <<< "$all_teams"
+
+  echo "Map built from ${team_count} team(s) covering ${#REPO_TEAMS[@]} repo(s)."
+}
+
+# Returns sorted team slugs for $1 from the pre-built REPO_TEAMS map.
 get_product_teams() {
   local repo="$1"
-  local out
-  if ! out=$(gh api "repos/${ORG}/${repo}/teams" --paginate 2>&1); then
-    echo "::error::Failed to query teams for ${repo}: ${out}" >&2
-    return 1
-  fi
-  echo "$out" | jq -r "[.[] | .slug] | map(select(. != \"${PLATFORM_TEAM}\")) | sort | .[]"
+  echo "${REPO_TEAMS[$repo]:-}" | tr ' ' '\n' | grep -v '^$' | sort || true
 }
 
 # Generates the expected CODEOWNERS content for a repo.
@@ -89,16 +120,18 @@ generate_codeowners() {
 
 mkdir -p targets
 
-# ── Preflight: verify the App token can query repo teams ─────────────────────
-# This endpoint requires Organisation > Members: Read on the App installation.
+# ── Preflight: verify the App token can query org teams ──────────────────────
+# Uses GET /orgs/{org}/teams which requires Organisation > Members: Read.
 # Fail fast here rather than silently mishandling 403s across every repo.
-echo "Checking App token has permission to query repository teams..."
-if ! gh api "repos/${ORG}/DevOps_Toolkit/teams" --paginate > /dev/null 2>&1; then
-  echo "::error::The App token cannot access repo team assignments (GET /repos/{org}/{repo}/teams)."
-  echo "::error::Grant 'Organisation > Members: Read' to the GitHub App installation and re-run."
+echo "Checking App token has permission to query org teams..."
+if ! gh api "orgs/${ORG}/teams" --paginate > /dev/null 2>&1; then
+  echo "::error::The App token cannot list org teams (GET /orgs/{org}/teams)."
+  echo "::error::Confirm 'Organisation > Members: Read' is granted to the GitHub App installation."
   exit 1
 fi
 echo "Permission check passed."
+
+build_repo_teams_map
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
