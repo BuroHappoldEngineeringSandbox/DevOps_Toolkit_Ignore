@@ -99,6 +99,10 @@ runs:
       run: |
         $tok = '${{ inputs.token }}'
         if ([string]::IsNullOrWhiteSpace($tok)) { $tok = '${{ github.token }}' }
+        if ([string]::IsNullOrWhiteSpace($tok)) {
+          Write-Error "No GitHub token available — set the token input or ensure github.token is present."
+          exit 1
+        }
 
         "DEP_TOKEN=$tok" | Out-File -FilePath $env:GITHUB_ENV -Append
         "CONFIGURATION=${{ inputs.configuration }}" | Out-File -FilePath $env:GITHUB_ENV -Append

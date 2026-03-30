@@ -5,10 +5,6 @@ inputs:
   source:
     description: "Directory containing dependency assemblies"
     required: true
-  configuration:
-    description: "Configuration (Release/Debug) — optional"
-    required: false
-    default: ""
 
 runs:
   using: "composite"
@@ -17,8 +13,6 @@ runs:
       shell: pwsh
       run: |
         [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-
-        
         $src = "${{ inputs.source }}"
         if (-not (Test-Path $src)) {
           Write-Host "::warning::No assemblies directory found at: $src - skipping stage step."

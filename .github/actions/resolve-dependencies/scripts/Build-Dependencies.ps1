@@ -126,8 +126,10 @@ if (Test-Path $bhomAssemblies) {
 }
 
 # Also collect from standard SDK output paths for any SDK-style projects that do not use xcopy.
+# Use [IO.Path]::DirectorySeparatorChar to avoid a hardcoded backslash failing on non-Windows agents.
+$binPattern = [IO.Path]::DirectorySeparatorChar + "bin" + [IO.Path]::DirectorySeparatorChar + $Configuration + [IO.Path]::DirectorySeparatorChar
 Get-ChildItem "deps" -Recurse -Filter *.dll -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -match "\\bin\\$Configuration\\" } |
+    Where-Object { $_.FullName -match [regex]::Escape($binPattern) } |
     ForEach-Object { Copy-Item $_.FullName "deps-assemblies" -Force }
 
 $totalAssemblies = (Get-ChildItem "deps-assemblies" -Filter *.dll -ErrorAction SilentlyContinue | Measure-Object).Count
