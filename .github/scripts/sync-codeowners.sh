@@ -194,8 +194,7 @@ while IFS= read -r repo; do
     # where team assignments may have changed since the last push.
     git push origin "$BRANCH" --force
 
-    # Close any open PRs from older datestamped branches before opening a
-    # fresh one, so stale approvals cannot carry forward to new content.
+    # Close any stale PRs from older datestamped branches.
     gh pr list \
       --repo "$ORG/$repo" \
       --state open \
@@ -203,17 +202,16 @@ while IFS= read -r repo; do
       --jq ".[] | select(.headRefName | startswith(\"${BRANCH_PREFIX}\")) | select(.headRefName != \"${BRANCH}\") | .number" \
     | xargs -r -I{} gh pr close {} --repo "$ORG/$repo" --comment "Superseded by a newer sync run."
 
-    # Check if a PR already exists for today's branch (same-day re-run).
-    EXISTING_PR=$(gh pr list \
-      --repo "$ORG/$repo" \
-      --state open \
-      --head "$BRANCH" \
-      --json url \
-      --jq '.[0].url // empty')
-
+    # Open a PR if one doesn't already exist — a new commit on the existing
+    # branch is sufficient to update an open PR; no need to recreate it.
     TEAM_LIST="${ASSIGNED_TEAMS[*]:-none}"
-    if [ -n "$EXISTING_PR" ]; then
-      echo "::notice::Branch updated on existing PR: $EXISTING_PR"
+    if gh pr list \
+        --repo "$ORG/$repo" \
+        --state open \
+        --head "$BRANCH" \
+        --json number \
+        --jq '.[0]' | grep -q .; then
+      echo "::notice::Commit pushed to existing PR."
     else
       PR_URL=$(gh pr create \
         --repo "$ORG/$repo" \

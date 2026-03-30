@@ -86,10 +86,10 @@ while IFS= read -r repo; do
     git add .editorconfig
     git commit -m "chore: update .editorconfig from DevOps_Toolkit"
 
-    git push origin "$BRANCH"
+    # --force is safe: this branch is exclusively owned by this workflow.
+    git push origin "$BRANCH" --force
 
-    # Close any open PRs from previous runs (older datestamped branches)
-    # before opening a fresh one, to avoid accumulating stale PRs.
+    # Close any stale PRs from older datestamped branches.
     gh pr list \
       --repo "$ORG/$repo" \
       --state open \
@@ -97,12 +97,22 @@ while IFS= read -r repo; do
       --jq ".[] | select(.headRefName | startswith(\"${BRANCH_PREFIX}\")) | select(.headRefName != \"${BRANCH}\") | .number" \
     | xargs -r -I{} gh pr close {} --repo "$ORG/$repo" --comment "Superseded by a newer sync run."
 
-    PR_URL=$(gh pr create \
-      --repo "$ORG/$repo" \
-      --head "$BRANCH" \
-      --base develop \
-      --title "chore: update .editorconfig" \
-      --body "Automated update of \`.editorconfig\` from [DevOps_Toolkit](https://github.com/${ORG}/DevOps_Toolkit/blob/main/config/.editorconfig).
+    # Open a PR if one doesn't already exist — a new commit on the existing
+    # branch is sufficient to update an open PR; no need to recreate it.
+    if gh pr list \
+        --repo "$ORG/$repo" \
+        --state open \
+        --head "$BRANCH" \
+        --json number \
+        --jq '.[0]' | grep -q .; then
+      echo "::notice::Commit pushed to existing PR."
+    else
+      PR_URL=$(gh pr create \
+        --repo "$ORG/$repo" \
+        --head "$BRANCH" \
+        --base develop \
+        --title "chore: update .editorconfig" \
+        --body "Automated update of \`.editorconfig\` from [DevOps_Toolkit](https://github.com/${ORG}/DevOps_Toolkit/blob/main/config/.editorconfig).
 
 Formatting rules are managed centrally in DevOps_Toolkit. This PR was opened automatically.
 
@@ -110,8 +120,8 @@ To fix formatting issues locally before opening a PR:
 \`\`\`bash
 dotnet format
 \`\`\`")
-
-    echo "::notice::PR opened: $PR_URL"
+      echo "::notice::PR opened: $PR_URL"
+    fi
   ) || {
     echo "::error::Failed to update $repo"
     FAILURES+=("$repo")
