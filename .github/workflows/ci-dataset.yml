@@ -131,6 +131,7 @@ jobs:
 
       - name: Upload SARIF
         if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && always()
+        # TODO: pin to a SHA — e.g. github/codeql-action/upload-sarif@<SHA> # v4
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: dataset-compliance.sarif

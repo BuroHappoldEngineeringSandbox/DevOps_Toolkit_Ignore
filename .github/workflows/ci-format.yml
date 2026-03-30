@@ -34,24 +34,28 @@ jobs:
         with:
           dotnet-version: ${{ inputs.dotnet_version }}
 
-      - name: Compute changed C# files
+      - name: Compute changed .NET files
         id: changed
         shell: bash
         run: |
           base_sha="${{ github.event.pull_request.base.sha }}"
           git fetch --depth=1 origin "$base_sha"
 
-          git diff --name-only --diff-filter=ACMRT "$base_sha" HEAD -- '*.cs' \
-            > changed_cs_files.txt
+          # Include all file types covered by .editorconfig rules:
+          #   *.cs                        — file header, naming, code cleanliness
+          #   *.csproj, *.props, *.targets — indent_size = 2 (project file section)
+          git diff --name-only --diff-filter=ACMRT "$base_sha" HEAD \
+            -- '*.cs' '*.csproj' '*.props' '*.targets' \
+            > changed_dotnet_files.txt
 
-          count=$(wc -l < changed_cs_files.txt | tr -d ' ')
+          count=$(wc -l < changed_dotnet_files.txt | tr -d ' ')
           echo "count=$count" >> $GITHUB_OUTPUT
 
           if [ "$count" -gt 0 ]; then
-            echo "::notice::$count C# file(s) changed — running format check (warn only)."
-            cat changed_cs_files.txt
+            echo "::notice::$count .NET file(s) changed — running format check (warn only)."
+            cat changed_dotnet_files.txt
           else
-            echo "::notice::No changed C# files — format check skipped."
+            echo "::notice::No changed .NET files — format check skipped."
           fi
 
       - name: Checkout DevOps_Toolkit (format script)

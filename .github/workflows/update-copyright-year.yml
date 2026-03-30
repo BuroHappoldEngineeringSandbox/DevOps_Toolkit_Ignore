@@ -1,0 +1,67 @@
+name: Update copyright year
+
+on:
+  schedule:
+    - cron: '0 9 1 1 *'  # 09:00 UTC on 1 January every year
+  workflow_dispatch:       # allow manual runs (e.g. to test or catch a missed schedule)
+
+concurrency:
+  group: update-copyright-year
+  cancel-in-progress: false
+
+jobs:
+  bump-year:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout DevOps_Toolkit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Bump end year in .editorconfig
+        id: bump
+        run: |
+          PREV_YEAR=$(date -d 'last year' +%Y)
+          NEW_YEAR=$(date +%Y)
+          FILE="config/.editorconfig"
+
+          if grep -q "2015 - ${PREV_YEAR}" "$FILE"; then
+            sed -i "s/2015 - ${PREV_YEAR}/2015 - ${NEW_YEAR}/g" "$FILE"
+            echo "changed=true"       >> "$GITHUB_OUTPUT"
+            echo "new_year=${NEW_YEAR}" >> "$GITHUB_OUTPUT"
+            echo "::notice::Bumped copyright end year from ${PREV_YEAR} to ${NEW_YEAR}."
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Copyright year already at ${NEW_YEAR} or pattern not found — nothing to do."
+          fi
+
+      - name: Open PR
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_YEAR: ${{ steps.bump.outputs.new_year }}
+        run: |
+          BRANCH="chore/copyright-year-${NEW_YEAR}"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add config/.editorconfig
+          git commit -m "chore: bump copyright end year to ${NEW_YEAR}"
+          git push origin "$BRANCH"
+
+          REPO_URL="${{ github.server_url }}/${{ github.repository }}"
+          DISTRIBUTE_URL="${REPO_URL}/actions/workflows/distribute-editorconfig.yml"
+
+          PR_BODY="Automated annual update — advances the BHoM copyright end year in \`config/.editorconfig\` to ${NEW_YEAR}.\n\nOnce merged, the [distribute-editorconfig](${DISTRIBUTE_URL}) workflow will automatically open PRs across all BHoM repos to propagate the change."
+
+          gh pr create \
+            --title "chore: bump copyright end year to ${NEW_YEAR}" \
+            --body  "$(printf '%b' "$PR_BODY")" \
+            --base  main \
+            --head  "$BRANCH"

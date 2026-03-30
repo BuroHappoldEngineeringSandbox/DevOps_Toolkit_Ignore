@@ -2,7 +2,7 @@
 # check-format-pr.sh
 #
 # Runs dotnet format --verify-no-changes only for C# files changed in the PR.
-# Expects to run from the caller repo root with changed_cs_files.txt in the current directory.
+# Expects to run from the caller repo root with changed_dotnet_files.txt in the current directory.
 # Applies the canonical BHoM .editorconfig from DevOps_Toolkit/config/.editorconfig
 # so that all repos are checked against the same rules regardless of their local .editorconfig.
 #
@@ -31,8 +31,8 @@ else
   echo "::warning::Canonical .editorconfig not found at $CANONICAL_EDITORCONFIG — using repo's own .editorconfig (if present)."
 fi
 
-if [ ! -f changed_cs_files.txt ]; then
-  echo "::notice::changed_cs_files.txt not found — format check skipped."
+if [ ! -f changed_dotnet_files.txt ]; then
+  echo "::notice::changed_dotnet_files.txt not found — format check skipped."
   exit 0
 fi
 
@@ -59,7 +59,7 @@ while IFS= read -r file; do
       project_files["$csproj"]="$file"
     fi
   fi
-done < changed_cs_files.txt
+done < changed_dotnet_files.txt
 
 if [ ${#project_files[@]} -eq 0 ]; then
   echo "::notice::No .csproj found for any changed file — format check skipped."

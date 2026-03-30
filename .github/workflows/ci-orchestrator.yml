@@ -20,22 +20,69 @@ jobs:
     permissions:
       contents: read
     outputs:
-      state:             ${{ steps.topic.outputs.state }}
-      dotnet_version:    ${{ steps.config.outputs.dotnet_version }}
-      configuration:     ${{ steps.config.outputs.configuration }}
-      test_solution:     ${{ steps.config.outputs.test_solution }}
-      run_format:        ${{ steps.policy.outputs.run_format }}
-      run_compliance:    ${{ steps.policy.outputs.run_compliance }}
-      compliance_checks: ${{ steps.policy.outputs.compliance_checks }}
-      run_dataset:       ${{ steps.policy.outputs.run_dataset }}
-      run_build:         ${{ steps.policy.outputs.run_build }}
-      run_unit_tests:    ${{ steps.policy.outputs.run_unit_tests }}
+      state:                    ${{ steps.topic.outputs.state }}
+      dotnet_version:           ${{ steps.config.outputs.dotnet_version }}
+      configuration:            ${{ steps.config.outputs.configuration }}
+      test_solution:            ${{ steps.config.outputs.test_solution }}
+      run_format:               ${{ steps.policy.outputs.run_format }}
+      run_compliance:           ${{ steps.policy.outputs.run_compliance }}
+      compliance_checks:        ${{ steps.policy.outputs.compliance_checks }}
+      run_dataset:              ${{ steps.policy.outputs.run_dataset }}
+      run_build:                ${{ steps.policy.outputs.run_build }}
+      run_unit_tests:           ${{ steps.policy.outputs.run_unit_tests }}
+      format_files_changed:     ${{ steps.changed.outputs.format_files_changed }}
+      compliance_files_changed: ${{ steps.changed.outputs.compliance_files_changed }}
+      dataset_files_changed:    ${{ steps.changed.outputs.dataset_files_changed }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           fetch-depth: 1
+
+      # Detect which file types changed in this PR so child runners are never
+      # started if there is nothing for them to process.
+      # format, compliance, and dataset are PR-only checks; setting their flags
+      # to false on non-PR events prevents child runners from being allocated at
+      # all. build and unit-tests have no change guard — they run unconditionally.
+      - name: Detect changed file types
+        id: changed
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "format_files_changed=false"     >> "$GITHUB_OUTPUT"
+            echo "compliance_files_changed=false" >> "$GITHUB_OUTPUT"
+            echo "dataset_files_changed=false"    >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          git fetch --depth=1 origin "$base_sha"
+          CHANGED=$(git diff --name-only --diff-filter=ACMRT "$base_sha" HEAD)
+
+          # format: *.cs, *.csproj, *.props, *.targets
+          if echo "$CHANGED" | grep -qE '\.(cs|csproj|props|targets)$'; then
+            echo "format_files_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "format_files_changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No .NET format-relevant files changed — format job will be skipped."
+          fi
+
+          # compliance: *.cs, *.csproj
+          if echo "$CHANGED" | grep -qE '\.(cs|csproj)$'; then
+            echo "compliance_files_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "compliance_files_changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No compliance-relevant files changed — compliance job will be skipped."
+          fi
+
+          # dataset: *.json anywhere under a datasets/ directory
+          if echo "$CHANGED" | grep -qE '(^|/)datasets/.*\.json$'; then
+            echo "dataset_files_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dataset_files_changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No dataset files changed — dataset job will be skipped."
+          fi
 
       # Topic precedence when multiple labels match: beta > alpha > prototype.
       - name: Read GitHub Topic
@@ -87,7 +134,8 @@ jobs:
     needs: setup
     if: |
       needs.setup.result == 'success' &&
-      needs.setup.outputs.run_format == 'true'
+      needs.setup.outputs.run_format == 'true' &&
+      needs.setup.outputs.format_files_changed == 'true'
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-format.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
@@ -98,7 +146,8 @@ jobs:
     needs: setup
     if: |
       needs.setup.result == 'success' &&
-      needs.setup.outputs.run_compliance == 'true'
+      needs.setup.outputs.run_compliance == 'true' &&
+      needs.setup.outputs.compliance_files_changed == 'true'
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-compliance.yml@main
     with:
       dotnet_version:    ${{ needs.setup.outputs.dotnet_version }}
@@ -111,7 +160,8 @@ jobs:
     needs: setup
     if: |
       needs.setup.result == 'success' &&
-      needs.setup.outputs.run_dataset == 'true'
+      needs.setup.outputs.run_dataset == 'true' &&
+      needs.setup.outputs.dataset_files_changed == 'true'
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-dataset.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
