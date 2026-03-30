@@ -117,8 +117,9 @@ generate_codeowners() {
   fi
 
   echo ""
-  echo "# Platform team owns all governance and CI configuration."
-  echo "/.github/ @${ORG}/${PLATFORM_TEAM}"
+  echo "# Platform team owns all governance, CI configuration, and centrally managed files."
+  echo "/.github/      @${ORG}/${PLATFORM_TEAM}"
+  echo "/.editorconfig @${ORG}/${PLATFORM_TEAM}"
 }
 
 mkdir -p targets
