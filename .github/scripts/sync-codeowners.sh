@@ -38,7 +38,8 @@ UPDATED=0
 FAILURES=()
 # Associative array: repo name → space-separated sorted team slugs.
 # Populated by build_repo_teams_map() before the main loop.
-declare -A REPO_TEAMS
+# Initialised with =() so bash considers it 'set' under set -u.
+declare -A REPO_TEAMS=()
 
 if [ ! -f "$REPO_FILE" ]; then
   echo "::error::Repo list file not found: $REPO_FILE"
