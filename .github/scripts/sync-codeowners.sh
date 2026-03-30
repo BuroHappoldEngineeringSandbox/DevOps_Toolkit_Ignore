@@ -73,11 +73,11 @@ build_repo_teams_map() {
       --jq '.[].name' 2>/dev/null || true)
     while IFS= read -r repo_name; do
       [ -z "$repo_name" ] && continue
-      if [ -z "${REPO_TEAMS[$repo_name]+_}" ]; then
-        REPO_TEAMS[$repo_name]="$slug"
+      if [[ -v REPO_TEAMS["$repo_name"] ]]; then
+        # Key exists — append and re-sort.
+        REPO_TEAMS[$repo_name]=$(printf '%s\n%s' "${REPO_TEAMS[$repo_name]}" "$slug" | sort | tr '\n' ' ' | sed 's/ $//')
       else
-        # Keep entries sorted; append and re-sort.
-        REPO_TEAMS[$repo_name]=$(echo -e "${REPO_TEAMS[$repo_name]}\n${slug}" | sort | tr '\n' ' ' | sed 's/ $//')
+        REPO_TEAMS[$repo_name]="$slug"
       fi
     done <<< "$repos"
   done <<< "$all_teams"
@@ -88,7 +88,9 @@ build_repo_teams_map() {
 # Returns sorted team slugs for $1 from the pre-built REPO_TEAMS map.
 get_product_teams() {
   local repo="$1"
-  echo "${REPO_TEAMS[$repo]:-}" | tr ' ' '\n' | grep -v '^$' | sort || true
+  if [[ -v REPO_TEAMS["$repo"] ]]; then
+    echo "${REPO_TEAMS[$repo]}" | tr ' ' '\n' | grep -v '^$' | sort
+  fi
 }
 
 # Generates the expected CODEOWNERS content for a repo.
