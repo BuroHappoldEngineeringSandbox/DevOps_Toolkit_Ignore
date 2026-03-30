@@ -8,22 +8,26 @@
 #                    SDK version has no effect on build output.
 #
 #   CONFIGURATION    MSBuild/dotnet build configuration.
-#                    Always Release for CI.
+#                    Always Release for CI builds.
+#                    Note: unit-test solutions may define a 'Test'
+#                    MSBuild configuration (disables post-build xcopy
+#                    events for local dev). On CI no assemblies are
+#                    locked by UIs, so Release is safe and avoids
+#                    requiring every repo to define a 'Test' config.
 #
-#   TEST_SOLUTION    Conventional path to the unit-test solution
-#                    within a caller repo. The unit-tests job
-#                    skips gracefully if the path does not exist.
+#   TEST_SOLUTION    Not defined here — the conventional path
+#                    .ci/unit-tests/<RepoName>_Tests.sln is
+#                    repo-specific. ci-unit-tests.yml discovers
+#                    the solution dynamically at runtime.
 # ============================================================
 set -euo pipefail
 
 DOTNET_VERSION="8.0"
 CONFIGURATION="Release"
-TEST_SOLUTION=".ci/tests/unitTests/UnitTests.sln"
 
 {
   echo "dotnet_version=$DOTNET_VERSION"
   echo "configuration=$CONFIGURATION"
-  echo "test_solution=$TEST_SOLUTION"
 } >> "${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"
 
-echo "::notice::dotnet_version=$DOTNET_VERSION  configuration=$CONFIGURATION  test_solution=$TEST_SOLUTION"
+echo "::notice::dotnet_version=$DOTNET_VERSION  configuration=$CONFIGURATION"

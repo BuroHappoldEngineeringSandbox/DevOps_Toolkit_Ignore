@@ -23,7 +23,6 @@ jobs:
       state:                    ${{ steps.topic.outputs.state }}
       dotnet_version:           ${{ steps.config.outputs.dotnet_version }}
       configuration:            ${{ steps.config.outputs.configuration }}
-      test_solution:            ${{ steps.config.outputs.test_solution }}
       run_format:               ${{ steps.policy.outputs.run_format }}
       run_compliance:           ${{ steps.policy.outputs.run_compliance }}
       compliance_checks:        ${{ steps.policy.outputs.compliance_checks }}
@@ -191,6 +190,5 @@ jobs:
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
-      test_solution:  ${{ needs.setup.outputs.test_solution }}
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}

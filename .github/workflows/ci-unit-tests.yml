@@ -9,9 +9,6 @@ on:
       configuration:
         type: string
         required: true
-      test_solution:
-        type: string
-        required: true
     secrets:
       GH_TOKEN:
         required: false  # optional PAT for private deps; else github.token
@@ -39,14 +36,26 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Check test solution exists
+      - name: Discover test solution
         id: test_check
         run: |
-          if (-not (Test-Path "${{ inputs.test_solution }}")) {
-            Write-Host "::notice::No test solution at '${{ inputs.test_solution }}' — unit tests skipped. Place a solution at that path to enable this check."
+          # Convention per BHoM testing docs: .ci/unit-tests/<RepoName>_Tests.sln
+          # The solution name is repo-specific so it is discovered at runtime
+          # rather than hardcoded centrally in pipeline-defaults.sh.
+          $slns = Get-ChildItem -Path ".ci/unit-tests" -Filter "*.sln" -ErrorAction SilentlyContinue
+
+          if (-not $slns) {
+            Write-Host "::notice::No test solution found under .ci/unit-tests/ — unit tests skipped."
+            Write-Host "::notice::To enable unit tests, add a solution at .ci/unit-tests/<RepoName>_Tests.sln"
             "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           } else {
-            "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            if ($slns.Count -gt 1) {
+              Write-Host "::warning::Multiple solutions found under .ci/unit-tests/ — using: $($slns[0].Name)"
+            }
+            $sln = $slns[0].FullName
+            "skip=false"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "solution=$sln" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "::notice::Test solution discovered: $sln"
           }
 
       - name: Resolve dependencies
@@ -66,18 +75,18 @@ jobs:
 
       - name: Restore test solution
         if: steps.test_check.outputs.skip != 'true'
-        run: dotnet restore "${{ inputs.test_solution }}"
+        run: dotnet restore "${{ steps.test_check.outputs.solution }}"
 
-      - name: Build (${{ inputs.configuration }})
+      - name: Build (Release)
         if: steps.test_check.outputs.skip != 'true'
-        run: dotnet build "${{ inputs.test_solution }}" --no-restore --configuration ${{ inputs.configuration }}
+        run: dotnet build "${{ steps.test_check.outputs.solution }}" --no-restore --configuration ${{ inputs.configuration }}
 
       - name: Run tests
         id: test
         if: steps.test_check.outputs.skip != 'true'
         continue-on-error: true
         run: |
-          $solutionDir  = Split-Path "${{ inputs.test_solution }}"
+          $solutionDir  = Split-Path "${{ steps.test_check.outputs.solution }}"
           $runsettings  = Join-Path $solutionDir ".runsettings"
           $settingsArg  = if (Test-Path $runsettings) { "--settings `"$runsettings`"" } else { "" }
 
@@ -85,7 +94,7 @@ jobs:
             Write-Host "::notice::Using runsettings: $runsettings"
           }
 
-          $expression = "dotnet test `"${{ inputs.test_solution }}`" " +
+          $expression = "dotnet test `"${{ steps.test_check.outputs.solution }}`" " +
                         "--no-build " +
                         "--configuration ${{ inputs.configuration }} " +
                         "--verbosity normal " +
