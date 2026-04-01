@@ -130,16 +130,20 @@ runs:
         # 2. SDK .resx fix: repos like BHoM_UI (SDK-style, net472, non-string .resx)
         #    fail with MSB3822/MSB3823 on SDK 8.0.300+ because the resource compiler
         #    requires GenerateResourceUsePreserializedResources=true AND a reference
-        #    to System.Resources.Extensions. These properties are scoped to .NET
-        #    Framework targets only (TargetFramework starts with 'net4') to avoid
-        #    affecting netstandard/net6+ SDK-style projects where this is not needed.
-        #    System.Resources.Extensions 8.0.0 is compatible with net4x targets.
+        #    to System.Resources.Extensions.
+        #    NOTE: conditions on TargetFramework cannot be used here because
+        #    Directory.Build.props is imported by Sdk.props → Microsoft.Common.props
+        #    before the project's own <PropertyGroup> is evaluated, so
+        #    $(TargetFramework) is always empty at import time. The fix is applied
+        #    unconditionally; it is a no-op for netstandard/net6+ projects and is
+        #    ignored by legacy packages.config projects (which don't process
+        #    PackageReference items at all).
         @(
             '<Project>',
-            '  <PropertyGroup Condition="$(TargetFramework.StartsWith(''net4''))">',
+            '  <PropertyGroup>',
             '    <GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>',
             '  </PropertyGroup>',
-            '  <ItemGroup Condition="$(TargetFramework.StartsWith(''net4''))">',
+            '  <ItemGroup>',
             '    <PackageReference Include="System.Resources.Extensions" Version="8.0.0" />',
             '  </ItemGroup>',
             '</Project>'
