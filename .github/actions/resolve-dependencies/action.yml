@@ -137,6 +137,26 @@ runs:
         Set-Content deps/Directory.Build.props   '<Project />' -Encoding utf8
         Set-Content deps/Directory.Build.targets '<Project />' -Encoding utf8
 
+        # global.json: pins the dotnet SDK version for every build inside deps/.
+        # dotnet walks upward from each project file to find global.json, so this
+        # single file constrains all dependency builds without touching any repo's
+        # own files (repos with their own global.json are unaffected — first match wins).
+        # This prevents the runner's pre-installed higher SDK (e.g. SDK 10 on
+        # windows-latest) from being selected over the configured version. SDK 10
+        # made non-string .resx resources (MSB3822/MSB3823) a hard build error,
+        # breaking repos like BHoM_UI that relied on the previous warning-only behaviour.
+        # rollForward latestMinor: accept any installed 8.0.x patch without requiring
+        # an exact match (avoids failures when setup-dotnet installs a later patch).
+        $sdkVersion = "${{ inputs.dotnet_version }}"
+        # global.json requires a 3-part version; pad "8.0" → "8.0.0"
+        if ($sdkVersion -match '^\d+\.\d+$') { $sdkVersion = "$sdkVersion.0" }
+        [ordered]@{
+            sdk = [ordered]@{
+                version     = $sdkVersion
+                rollForward = "latestMinor"
+            }
+        } | ConvertTo-Json | Set-Content deps/global.json -Encoding utf8
+
     # ------------------------------------------------------------
     # Resolve dependency graph (caller or seeds mode)
     # ------------------------------------------------------------
