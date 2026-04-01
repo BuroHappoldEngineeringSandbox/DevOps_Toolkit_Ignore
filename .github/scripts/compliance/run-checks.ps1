@@ -24,13 +24,23 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $fileList = @(Get-Content $FileListPath | ForEach-Object { $_ -replace '/', '\' })
-# Split on whitespace. Use explicit .NET Split with separator chars to avoid any
-# PowerShell regex operator quirks in CI environments.
-Write-Host "::debug::Checks raw: '$Checks'"
-Write-Host "::debug::Checks bytes: $([System.Text.Encoding]::UTF8.GetBytes($Checks.PadRight(1)) -join ',')"
-$checks = @($Checks.Trim().Split([char[]](' ', "`t", "`r", "`n"), [System.StringSplitOptions]::RemoveEmptyEntries))
 
-Write-Host "::notice title=Compliance checks::Running: $($checks -join ', ')"
+# Always-visible diagnostics — these will appear in the step log unconditionally.
+Write-Host "DIAG: Checks param length=$($Checks.Length) value='$Checks'"
+Write-Host "DIAG: Checks UTF-8 bytes: $([System.Text.Encoding]::UTF8.GetBytes($Checks.PadRight(1)) | Select-Object -First 40 | ForEach-Object { "{0:X2}" -f $_ })"
+Write-Host "DIAG: FileList count=$($fileList.Count)"
+
+# Split on all Unicode whitespace/separator chars ([\s\p{Z}]+) via .NET regex so that
+# non-ASCII spaces (e.g. U+00A0 non-breaking space) are also treated as delimiters.
+$checks = @([regex]::Split($Checks.Trim(), '[\s\p{Z}]+') | Where-Object { $_ -ne '' })
+
+Write-Host "::notice title=Compliance checks::Running ($($checks.Count)): $($checks -join ', ')"
+
+if ($fileList.Count -eq 0) {
+    Write-Host "::warning::changed_files.txt is empty — no files to check. Skipping compliance runner."
+    "sarif_generated=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+    exit 0
+}
 
 $anyFailure   = 0
 $checkResults = [System.Collections.Generic.List[hashtable]]::new()
