@@ -17,7 +17,7 @@ class DatasetComplianceRunner
         //
         // Only processes .json files whose path contains "datasets" (case-insensitive),
         // mirroring BHoMBot's DatasetCompliance filtering.
-        var (outputFormat, sarifFilePath, files) = ParseArgs(args);
+        var (outputFormat, sarifFilePath, files) = ArgParser.ParseDataset(args);
         if (files == null || files.Count == 0)
         {
             Console.WriteLine("Usage:");
@@ -42,7 +42,7 @@ class DatasetComplianceRunner
         foreach (var file in files)
         {
             // Only .json files under a datasets/ path are in scope.
-            if (!IsDatasetFile(file)) continue;
+            if (!FileFilter.IsDatasetFile(file)) continue;
 
             if (verbose) Console.WriteLine($"\n=== Checking: {file} ===");
 
@@ -152,37 +152,4 @@ class DatasetComplianceRunner
         return mergedResult.Status == TestStatus.Error ? 1 : 0;
     }
 
-    static (string outputFormat, string? sarifFilePath, List<string>? files) ParseArgs(string[] args)
-    {
-        string  outputFormat  = "console";
-        string? sarifFilePath = null;
-        var     rest          = new List<string>();
-
-        for (int i = 0; i < args.Length; i++)
-        {
-            if (args[i] == "--output" && i + 1 < args.Length)
-            {
-                outputFormat = args[++i].ToLowerInvariant();
-                if (outputFormat != "console" && outputFormat != "github" &&
-                    outputFormat != "json"    && outputFormat != "sarif")
-                    outputFormat = "console";
-            }
-            else if ((args[i] == "--sarif-file" || args[i] == "--sarif") && i + 1 < args.Length)
-                sarifFilePath = args[++i];
-            else
-                rest.Add(args[i]);
-        }
-
-        return rest.Count == 0
-            ? (outputFormat, sarifFilePath, null)
-            : (outputFormat, sarifFilePath, rest);
-    }
-
-    /// <summary>
-    /// Returns true for .json files whose path contains a "datasets" segment,
-    /// mirroring BHoMBot's DatasetCompliance file filter.
-    /// </summary>
-    static bool IsDatasetFile(string file) =>
-        file.EndsWith(".json", StringComparison.OrdinalIgnoreCase) &&
-        file.Replace("\\", "/").Contains("/datasets/", StringComparison.OrdinalIgnoreCase);
 }

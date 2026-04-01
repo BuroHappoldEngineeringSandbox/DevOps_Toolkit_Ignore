@@ -15,7 +15,7 @@ class ComplianceRunner
         // CLI: ComplianceRunner [--output console|github|json|sarif] [--sarif-file PATH]
         //                       [--org-url URL]
         //                       <code|copyright|documentation|project> <file1> [file2 ...]
-        var (outputFormat, sarifFilePath, checkType, files, orgUrl) = ParseArgs(args);
+        var (outputFormat, sarifFilePath, checkType, files, orgUrl) = ArgParser.ParseCompliance(args);
         if (checkType == null || files == null || files.Count == 0)
         {
             Console.WriteLine("Usage:");
@@ -43,7 +43,7 @@ class ComplianceRunner
         foreach (var file in files)
         {
             // Each check type is only relevant to certain file extensions.
-            if (!IsRelevantFile(file, checkType)) continue;
+            if (!FileFilter.IsRelevantFile(file, checkType)) continue;
 
             if (verbose) Console.WriteLine($"\n=== Checking: {file} ===");
 
@@ -189,49 +189,4 @@ class ComplianceRunner
         return mergedResult.Status == TestStatus.Error ? 1 : 0;
     }
 
-    static (string outputFormat, string? sarifFilePath, string? checkType, List<string>? files, string orgUrl)
-        ParseArgs(string[] args)
-    {
-        string  outputFormat  = "console";
-        string? sarifFilePath = null;
-        string  orgUrl        = "";
-        var     rest          = new List<string>();
-
-        for (int i = 0; i < args.Length; i++)
-        {
-            if (args[i] == "--output" && i + 1 < args.Length)
-            {
-                outputFormat = args[++i].ToLowerInvariant();
-                if (outputFormat != "console" && outputFormat != "github" &&
-                    outputFormat != "json"    && outputFormat != "sarif")
-                    outputFormat = "console";
-            }
-            else if ((args[i] == "--sarif-file" || args[i] == "--sarif") && i + 1 < args.Length)
-                sarifFilePath = args[++i];
-            else if (args[i] == "--org-url" && i + 1 < args.Length)
-                orgUrl = args[++i];
-            else
-                rest.Add(args[i]);
-        }
-
-        if (rest.Count < 2) return (outputFormat, sarifFilePath, null, null, orgUrl);
-
-        var checkType = rest[0].Trim().ToLowerInvariant();
-        if (checkType != "code" && checkType != "copyright" &&
-            checkType != "documentation" && checkType != "project")
-            return (outputFormat, sarifFilePath, null, null, orgUrl);
-
-        return (outputFormat, sarifFilePath, checkType, rest.Skip(1).ToList(), orgUrl);
-    }
-
-    /// <summary>Returns true when a file should be processed by the given check type.</summary>
-    static bool IsRelevantFile(string file, string checkType)
-    {
-        if (checkType == "project")
-            return file.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) ||
-                   Path.GetFileName(file).Equals("AssemblyInfo.cs", StringComparison.OrdinalIgnoreCase);
-
-        // code, copyright, documentation all operate on .cs files.
-        return file.EndsWith(".cs", StringComparison.OrdinalIgnoreCase);
-    }
 }

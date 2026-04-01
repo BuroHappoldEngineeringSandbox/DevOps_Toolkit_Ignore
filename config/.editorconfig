@@ -14,19 +14,21 @@ charset                   = utf-8
 indent_size = 2
 
 # ── BHoM copyright file header enforcement (IDE0073) ─────────────────────────
-# Requires every .cs file to start with the BHoM LGPL copyright block.
-# Run `dotnet format` to auto-insert the header into files that are missing it.
-# Update the year on line 3 of the header each calendar year.
+# DISABLED — file_header_template only supports '//' headers; all BHoM files use '/* */'.
+# dotnet format would prepend a duplicate header rather than recognise the existing one.
+# Header correctness is already enforced by the bot compliance check on every PR.
+# To re-enable: migrate all '/* */' headers to '//' style repo-wide and update the bot check.
+#
+# [*.cs]
+# file_header_template = This file is part of the Buildings and Habitats object Model (BHoM)\nCopyright (c) 2015 - 2026, the respective contributors. All rights reserved.\n\nEach contributor holds copyright over their respective contributions.\nThe project versioning (Git) records all such contribution source information.\n\nThe BHoM is free software: you can redistribute it and/or modify\nit under the terms of the GNU Lesser General Public License as published by\nthe Free Software Foundation, either version 3.0 of the License, or\n(at your option) any later version.\n\nThe BHoM is distributed in the hope that it will be useful,\nbut WITHOUT ANY WARRANTY, without even the implied warranty of\nMERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the\nGNU Lesser General Public License for more details.\n\nYou should have received a copy of the GNU Lesser General Public License\nalong with this code. If not, see <https://www.gnu.org/licenses/lgpl-3.0.html>.
+# dotnet_diagnostic.IDE0073.severity = error
+
 [*.cs]
-file_header_template = This file is part of the Buildings and Habitats object Model (BHoM)\nCopyright (c) 2015 - 2026, the respective contributors. All rights reserved.\n\nEach contributor holds copyright over their respective contributions.\nThe project versioning (Git) records all such contribution source information.\n\nThe BHoM is free software: you can redistribute it and/or modify\nit under the terms of the GNU Lesser General Public License as published by\nthe Free Software Foundation, either version 3.0 of the License, or\n(at your option) any later version.\n\nThe BHoM is distributed in the hope that it will be useful,\nbut WITHOUT ANY WARRANTY, without even the implied warranty of\nMERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the\nGNU Lesser General Public License for more details.\n\nYou should have received a copy of the GNU Lesser General Public License\nalong with this code. If not, see <https://www.gnu.org/licenses/lgpl-3.0.html>.
-dotnet_diagnostic.IDE0073.severity = error
-
-# Optional: exclude CI/test helper files from needing headers
-# [.ci/**]
-# dotnet_diagnostic.IDE0073.severity = none
-
 # ── Naming conventions (IDE1006) ──────────────────────────────────────────────
-# Methods must be PascalCase  (mirrors MethodNameStartsUpper compliance check)
+# Covers bot checks: MethodNameStartsUpper (methods_pascal_case) and InputParameterStartsLower (parameters_camel_case).
+# Both run at error severity — equivalent enforcement to the bot. These checks are candidates for deprecation
+# once the editorconfig is deployed across repos and CI verifies dotnet format compliance.
+# Methods must be PascalCase
 dotnet_naming_rule.methods_pascal_case.symbols   = method_symbols
 dotnet_naming_rule.methods_pascal_case.style     = pascal_case_style
 dotnet_naming_rule.methods_pascal_case.severity  = error
@@ -34,7 +36,7 @@ dotnet_naming_rule.methods_pascal_case.severity  = error
 dotnet_naming_symbols.method_symbols.applicable_kinds          = method
 dotnet_naming_symbols.method_symbols.applicable_accessibilities = *
 
-# Parameters must be camelCase  (mirrors InputParameterStartsLower compliance check)
+# Parameters must be camelCase
 dotnet_naming_rule.parameters_camel_case.symbols   = parameter_symbols
 dotnet_naming_rule.parameters_camel_case.style     = camel_case_style
 dotnet_naming_rule.parameters_camel_case.severity  = error
@@ -62,24 +64,18 @@ dotnet_diagnostic.IDE0044.severity = suggestion
 dotnet_code_quality_unused_parameters = all
 dotnet_diagnostic.IDE0060.severity = suggestion
 
-# ── Pending review — overlaps with existing compliance engine checks ───────────
-# Uncomment once the corresponding compliance check has been assessed for retirement.
+# ── Pending migration ─────────────────────────────────────────────────────────
 
-# IDE0161: Prefer file-scoped namespace declarations (overlaps: HasSingleNamespace)
-# Requires converting all block-scoped namespaces to file-scoped — coordinate with
-# manager before enabling, given scope of change and Pawel's feedback on structural checks.
+# IDE0161: Prefer file-scoped namespace declarations
+# Deprecation candidate for bot check: HasSingleNamespace.
+# File-scoped syntax physically prevents multiple namespaces per file, making the bot check redundant.
+# Blocked on a repo-wide migration of all block-scoped namespaces — coordinate with manager.
 # csharp_style_namespace_declarations = file_scoped:warning
 
-# IDE0032: Use auto-implemented properties (overlaps: PropertyAccessorsHaveNoBody)
-# Only meaningful for oM files; would need path-scoped override for Engine/Adapter.
-# dotnet_style_prefer_auto_properties = true:suggestion
-
-# IDE0040: Add explicit accessibility modifiers (overlaps: IsPublicClass, IsPublicProperty)
-# Enforces that a modifier is present but not that it is specifically public —
-# keep the compliance checks until a full replacement strategy is agreed.
-# dotnet_style_require_accessibility_modifiers = always:warning
-
-# IDE0130: Namespace does not match folder structure (overlaps: EngineClassMatchesFilePath)
-# Adjacent but not identical — compliance check validates class name vs file name,
-# IDE0130 validates namespace vs folder path. Both may need to coexist long-term.
-# dotnet_diagnostic.IDE0130.severity = warning
+# ── Compliance checks with no editorconfig/Roslyn equivalent ──────────────────
+# These bot checks cannot be replaced by dotnet format and must remain in the compliance engine:
+#   HasValidCopyright, IsStaticClass, IsPublicClass, IsPublicProperty, IsVirtualProperty,
+#   PropertyAccessorsHaveNoBody, EngineClassMatchesFilePath, ObjectNameMatchesFileName,
+#   IsUsingCustomData, ModifyReturnsDifferentType, IsValidIImmutableObject,
+#   all BHoM attribute checks (HasDescriptionAttribute, HasOutputAttribute,
+#   IsInputAttributePresent, etc.), IsValidCreateMethod, IsValidConvertMethodName, IsValidEngineClassName.
