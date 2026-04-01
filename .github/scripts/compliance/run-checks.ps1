@@ -20,21 +20,16 @@ param(
     [string]$FileListPath = "changed_files.txt"
 )
 
-Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# Set-StrictMode intentionally omitted: strict mode blocks .Count on .NET-typed
+# String[] returned by static methods in some PS versions, causing false failures.
 
 $fileList = @(Get-Content $FileListPath | ForEach-Object { $_ -replace '/', '\' })
+[string[]]$checks = @($Checks.Trim() -split '\s+' | Where-Object { $_ -ne '' })
 
-# Always-visible diagnostics — these will appear in the step log unconditionally.
-Write-Host "DIAG: Checks param length=$($Checks.Length) value='$Checks'"
-Write-Host "DIAG: Checks UTF-8 bytes: $([System.Text.Encoding]::UTF8.GetBytes($Checks.PadRight(1)) | Select-Object -First 40 | ForEach-Object { "{0:X2}" -f $_ })"
-Write-Host "DIAG: FileList count=$($fileList.Count)"
+Write-Host "DIAG: PS=$($PSVersionTable.PSVersion) checks=$($checks.Length) files=$($fileList.Count) value='$Checks'"
 
-# Split on all Unicode whitespace/separator chars ([\s\p{Z}]+) via .NET regex so that
-# non-ASCII spaces (e.g. U+00A0 non-breaking space) are also treated as delimiters.
-$checks = @([regex]::Split($Checks.Trim(), '[\s\p{Z}]+') | Where-Object { $_ -ne '' })
-
-Write-Host "::notice title=Compliance checks::Running ($($checks.Count)): $($checks -join ', ')"
+Write-Host "::notice title=Compliance checks::Running ($($checks.Length)): $($checks -join ', ')"
 
 if ($fileList.Count -eq 0) {
     Write-Host "::warning::changed_files.txt is empty — no files to check. Skipping compliance runner."
