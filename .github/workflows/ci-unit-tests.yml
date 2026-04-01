@@ -39,9 +39,7 @@ jobs:
       - name: Discover test solution
         id: test_check
         run: |
-          # Convention per BHoM testing docs: .ci/unit-tests/<RepoName>_Tests.sln
-          # The solution name is repo-specific so it is discovered at runtime
-          # rather than hardcoded centrally in pipeline-defaults.sh.
+          # Convention: .ci/unit-tests/<RepoName>_Tests.sln (name is repo-specific, discovered at runtime).
           $slns = Get-ChildItem -Path ".ci/unit-tests" -Filter "*.sln" -ErrorAction SilentlyContinue
 
           if (-not $slns) {

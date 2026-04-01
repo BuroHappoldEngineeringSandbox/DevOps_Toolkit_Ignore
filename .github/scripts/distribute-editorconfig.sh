@@ -40,9 +40,7 @@ fi
 
 git config --global user.name  "bhom-devops[bot]"
 git config --global user.email "bhom-devops[bot]@users.noreply.github.com"
-# Configure git to use the app token for HTTPS authentication.
-# gh CLI handles auth via GH_TOKEN automatically; git push requires
-# the credential to be embedded in the remote URL explicitly.
+# gh handles auth automatically; credential helper needed for git push over HTTPS.
 git config --global credential.helper \
   '!f() { echo "username=x-access-token"; echo "password=${GH_TOKEN}"; }; f'
 
@@ -62,7 +60,6 @@ while IFS= read -r repo; do
     continue
   fi
 
-  # Skip if the repo's .editorconfig already matches the canonical file.
   if diff -q "$CANONICAL_ABS" "$TARGET_DIR/.editorconfig" >/dev/null 2>&1; then
     echo "::notice::$repo already up to date — skipped."
     SKIPPED=$((SKIPPED + 1))

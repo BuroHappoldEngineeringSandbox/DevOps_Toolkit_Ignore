@@ -67,7 +67,6 @@ jobs:
             Write-Host "::notice::No relevant files changed (.cs / .csproj) — skipping compliance."
           }
 
-      # Composite action refs cannot use expressions for org; change BuroHappoldEngineeringSandbox when promoting.
       - name: Resolve dependencies (Test_Toolkit graph)
         if: steps.changed.outputs.count != '0'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main

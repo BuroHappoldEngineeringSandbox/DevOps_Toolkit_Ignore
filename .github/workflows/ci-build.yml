@@ -108,11 +108,7 @@ jobs:
           }
 
       # altConfigs.txt: one org/repo/ConfigName per line; each built with MSBuild.
-      # ZeroCodeTool uses msbuild /t:Restore to avoid errorreport flag noise (issue #218 in BHoMBot).
-      # NOTE: The full semantics of altConfigs.txt are inherited from the legacy BHoMBot Core check
-      # and are not yet fully documented. This step is intentionally kept minimal — it mirrors the
-      # original BHoMBot behaviour (restore then MSBuild per config) without adding new logic.
-      # Defer any changes to altConfigs handling until requirements are confirmed.
+      # ZeroCodeTool uses msbuild /t:Restore (avoids errorreport flag noise on NuGet restore).
       - name: Build alt configurations
         run: |
           if (-not (Test-Path "altConfigs.txt")) {

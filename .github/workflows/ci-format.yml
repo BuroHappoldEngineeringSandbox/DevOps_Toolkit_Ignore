@@ -52,7 +52,7 @@ jobs:
           echo "count=$count" >> $GITHUB_OUTPUT
 
           if [ "$count" -gt 0 ]; then
-            echo "::notice::$count .NET file(s) changed — running format check (warn only)."
+            echo "::notice::$count .NET file(s) changed — running format check."
             cat changed_dotnet_files.txt
           else
             echo "::notice::No changed .NET files — format check skipped."
@@ -66,7 +66,7 @@ jobs:
           ref: main
           path: _toolkit
 
-      - name: Check formatting (changed files only, warn only)
+      - name: Check formatting (changed files only)
         if: steps.changed.outputs.count != '0'
         shell: bash
         run: bash _toolkit/.github/scripts/check-format-pr.sh

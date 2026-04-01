@@ -41,14 +41,9 @@ jobs:
         with:
           fetch-depth: 1
 
-      # Generates a short-lived installation token (1 h) scoped to the org.
-      # Required secrets (set at org level in DevOps_Toolkit):
-      #   BHOM_APP_ID          — GitHub App ID (numeric, from App settings page)
-      #   BHOM_APP_PRIVATE_KEY — PEM private key generated for the App
-      #
-      # The App needs these permissions installed on each target repo:
-      #   Repository: Contents (read & write), Pull requests (read & write)
-      #   Organisation: Members (read)  ← required to query team-to-repo assignments
+      # Generates a short-lived (1 h) installation token scoped to the org.
+      # Required secrets (org-level): BHOM_APP_ID, BHOM_APP_PRIVATE_KEY.
+      # Required App permissions: Contents (rw), Pull requests (rw), Organisation Members (read).
       - name: Generate app token
         id: app-token
         uses: actions/create-github-app-token@v1

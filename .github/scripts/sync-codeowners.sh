@@ -36,8 +36,7 @@ CODEOWNERS_PATH=".github/CODEOWNERS"
 SKIPPED=0
 UPDATED=0
 FAILURES=()
-# Associative array: repo name → space-separated sorted team slugs.
-# Populated by build_repo_teams_map() before the main loop.
+# Associative array: repo → space-separated sorted team slugs; built by build_repo_teams_map().
 # Initialised with =() so bash considers it 'set' under set -u.
 declare -A REPO_TEAMS=()
 
@@ -143,7 +142,6 @@ while IFS= read -r repo; do
   [ -z "$repo" ] && continue
   echo "::group::$ORG/$repo"
 
-  # Resolve which product teams are assigned to this repo.
   mapfile -t ASSIGNED_TEAMS < <(get_product_teams "$repo")
 
   EXPECTED="$(generate_codeowners "$repo" "${ASSIGNED_TEAMS[@]}")"

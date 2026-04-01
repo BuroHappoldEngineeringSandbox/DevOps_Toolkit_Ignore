@@ -1,21 +1,9 @@
 #!/usr/bin/env bash
-# check-format-pr.sh
-#
-# Runs dotnet format --verify-no-changes only for C# files changed in the PR.
-# Expects to run from the caller repo root with changed_dotnet_files.txt in the current directory.
-# Applies the canonical BHoM .editorconfig from DevOps_Toolkit/config/.editorconfig
-# so that all repos are checked against the same rules regardless of their local .editorconfig.
-#
-# Severity behaviour:
-#   error-level diagnostics  → job fails (PR is blocked)
-#   warning-level diagnostics → job passes with a warning annotation
-#   suggestion-level          → not reported
-#
-# Multi-solution repos: only the first path when *.sln names are sorted (LC_ALL=C) is used to
-# discover which .csproj entries are “in solution” and as the dotnet format target for in-sln
-# files. Other .sln files are ignored here — document or extend if you need full coverage.
-#
-# Usage: bash check-format-pr.sh
+# check-format-pr.sh — runs dotnet format --verify-no-changes for .NET files changed in the PR.
+# Expects: caller repo root as cwd, changed_dotnet_files.txt present.
+# Applies canonical DevOps_Toolkit/config/.editorconfig regardless of any repo-local config.
+# Severity: error → job fails (PR blocked); warning → annotation only; suggestion → ignored.
+# Multi-solution repos: uses the first .sln sorted by name (LC_ALL=C); other solutions ignored.
 
 set -euo pipefail
 

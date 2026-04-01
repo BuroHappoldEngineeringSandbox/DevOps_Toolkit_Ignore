@@ -11,8 +11,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-orchestrator
   cancel-in-progress: true
 
-# Scripts are sourced from _central (DevOps_Toolkit checkout) in the setup job.
-
 jobs:
   setup:
     runs-on: ubuntu-latest
@@ -39,11 +37,8 @@ jobs:
         with:
           fetch-depth: 1
 
-      # Detect which file types changed in this PR so child runners are never
-      # started if there is nothing for them to process.
-      # format, compliance, and dataset are PR-only checks; setting their flags
-      # to false on non-PR events prevents child runners from being allocated at
-      # all. build and unit-tests have no change guard — they run unconditionally.
+      # Skip PR-only child runners (format, compliance, dataset) when no relevant files changed.
+      # build and unit-tests run unconditionally on every event.
       - name: Detect changed file types
         id: changed
         shell: bash
