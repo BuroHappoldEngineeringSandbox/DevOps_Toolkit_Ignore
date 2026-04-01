@@ -124,6 +124,19 @@ runs:
         if (Test-Path deps/_order.txt)     { Remove-Item deps/_order.txt -Force }
         if (Test-Path deps/_selection.txt) { Remove-Item deps/_selection.txt -Force }
 
+        # Sentinel files: stop MSBuild from inheriting the caller repo's
+        # Directory.Build.props / Directory.Build.targets into dependency
+        # source trees cloned under deps/.
+        # Without these, caller repos with a root Directory.Build.props (e.g.
+        # Revit_Toolkit) propagate their build targets — such as per-configuration
+        # dotnet restore loops — into every dependency project. When a dependency
+        # defines a configuration (e.g. "Test") that exists in its own .csproj but
+        # not in its .sln solution configurations, the inherited restore target fails.
+        # MSBuild stops upward traversal as soon as it finds these files; the file
+        # content only needs to be a valid empty project.
+        Set-Content deps/Directory.Build.props   '<Project />' -Encoding utf8
+        Set-Content deps/Directory.Build.targets '<Project />' -Encoding utf8
+
     # ------------------------------------------------------------
     # Resolve dependency graph (caller or seeds mode)
     # ------------------------------------------------------------
