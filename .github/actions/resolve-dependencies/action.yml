@@ -124,17 +124,29 @@ runs:
         if (Test-Path deps/_order.txt)     { Remove-Item deps/_order.txt -Force }
         if (Test-Path deps/_selection.txt) { Remove-Item deps/_selection.txt -Force }
 
-        # Sentinel files: stop MSBuild from inheriting the caller repo's
-        # Directory.Build.props / Directory.Build.targets into dependency
-        # source trees cloned under deps/.
-        # Without these, caller repos with a root Directory.Build.props (e.g.
-        # Revit_Toolkit) propagate their build targets — such as per-configuration
-        # dotnet restore loops — into every dependency project. When a dependency
-        # defines a configuration (e.g. "Test") that exists in its own .csproj but
-        # not in its .sln solution configurations, the inherited restore target fails.
-        # MSBuild stops upward traversal as soon as it finds these files; the file
-        # content only needs to be a valid empty project.
-        Set-Content deps/Directory.Build.props   '<Project />' -Encoding utf8
+        # deps/Directory.Build.props serves two purposes:
+        # 1. Sentinel: stops MSBuild's upward traversal so the caller repo's
+        #    Directory.Build.props does not propagate into dependency source trees.
+        # 2. SDK .resx fix: repos like BHoM_UI (SDK-style, net472, non-string .resx)
+        #    fail with MSB3822/MSB3823 on SDK 8.0.300+ because the resource compiler
+        #    requires GenerateResourceUsePreserializedResources=true AND a reference
+        #    to System.Resources.Extensions. These properties are scoped to .NET
+        #    Framework targets only (TargetFramework starts with 'net4') to avoid
+        #    affecting netstandard/net6+ SDK-style projects where this is not needed.
+        #    System.Resources.Extensions 8.0.0 is compatible with net4x targets.
+        @(
+            '<Project>',
+            '  <PropertyGroup Condition="$(TargetFramework.StartsWith(''net4''))">',
+            '    <GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>',
+            '  </PropertyGroup>',
+            '  <ItemGroup Condition="$(TargetFramework.StartsWith(''net4''))">',
+            '    <PackageReference Include="System.Resources.Extensions" Version="8.0.0" />',
+            '  </ItemGroup>',
+            '</Project>'
+        ) | Set-Content deps/Directory.Build.props -Encoding utf8
+
+        # Directory.Build.targets sentinel — pair to Directory.Build.props above.
+        # Stops MSBuild's upward search for .targets customisations.
         Set-Content deps/Directory.Build.targets '<Project />' -Encoding utf8
 
         # global.json: pins the dotnet SDK version for every build inside deps/.
