@@ -209,19 +209,22 @@ runs:
         # misses when the caller's dotnet_version differed from the version that saved
         # the cache (e.g. old compliance.yml defaulted to 10.x, new to 8.x).
         key: depsasm-${{ runner.os }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
-        # Fallback prefix: if the exact key misses (e.g. a dep got a new commit, or a
-        # prior run was cancelled before its cache was saved), restore the most recent
-        # assembly cache for the same OS/config combination.
-        # cache-matched-key is populated for both exact and prefix matches; the build
-        # and save steps below gate on it to skip when any usable cache was found.
+        # Fallback prefix: if the exact key misses, restore the most recent assembly
+        # cache to warm the NuGet/MSBuild package cache for the subsequent build.
+        # IMPORTANT: a prefix match means the dep composition may differ from the
+        # cached set (different repos or SHAs added/removed). The build must still
+        # run. Gate on cache-hit (exact match only) — cache-matched-key is non-empty
+        # for both exact and prefix matches and must NOT be used to skip the build.
         restore-keys: |
           depsasm-${{ runner.os }}-${{ inputs.configuration }}-
 
     # ------------------------------------------------------------
-    # Build dependencies if no usable cache was found
+    # Build dependencies if no exact cache hit (exact key only).
+    # A prefix/restore-key match (cache-hit != 'true') means dep
+    # composition may differ from the cached set — must rebuild.
     # ------------------------------------------------------------
     - name: Build dependencies
-      if: steps.cache.outputs.cache-matched-key == ''
+      if: steps.cache.outputs.cache-hit != 'true'
       shell: pwsh
       run: |
         $script = Join-Path $env:GITHUB_ACTION_PATH "scripts/Build-Dependencies.ps1"
@@ -233,7 +236,7 @@ runs:
     # cross-repo composite action contexts (see note above).
     # ------------------------------------------------------------
     - name: Save dependency assembly cache
-      if: steps.cache.outputs.cache-matched-key == ''
+      if: steps.cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
         path: deps-assemblies
