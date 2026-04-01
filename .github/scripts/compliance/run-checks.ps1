@@ -24,7 +24,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $fileList = @(Get-Content $FileListPath | ForEach-Object { $_ -replace '/', '\' })
-$checks   = @($Checks -split ' ' | Where-Object { $_ -ne '' })
+# Split on whitespace (spaces or newlines) to handle both space-separated values
+# from policy.json and any newline-separated rendering from workflow outputs.
+$checks   = @($Checks -split '\s+' | Where-Object { $_ -ne '' })
 
 Write-Host "::notice title=Compliance checks::Running: $($checks -join ', ')"
 
@@ -48,7 +50,7 @@ foreach ($check in $checks) {
     Write-Host "::endgroup::"
 }
 
-$sarifGenerated = ((Get-ChildItem $sarifDir -Filter "*.sarif" -ErrorAction SilentlyContinue).Count -gt 0).ToString().ToLower()
+$sarifGenerated = (@(Get-ChildItem $sarifDir -Filter "*.sarif" -ErrorAction SilentlyContinue).Count -gt 0).ToString().ToLower()
 "sarif_generated=$sarifGenerated" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
 if ($env:GITHUB_STEP_SUMMARY) {
