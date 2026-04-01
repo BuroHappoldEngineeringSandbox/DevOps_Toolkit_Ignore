@@ -124,30 +124,19 @@ runs:
         if (Test-Path deps/_order.txt)     { Remove-Item deps/_order.txt -Force }
         if (Test-Path deps/_selection.txt) { Remove-Item deps/_selection.txt -Force }
 
-        # deps/Directory.Build.props serves two purposes:
-        # 1. Sentinel: stops MSBuild's upward traversal so the caller repo's
-        #    Directory.Build.props does not propagate into dependency source trees.
-        # 2. SDK .resx fix: repos like BHoM_UI (SDK-style, net472, non-string .resx)
-        #    fail with MSB3822/MSB3823 on SDK 8.0.300+ because the resource compiler
-        #    requires GenerateResourceUsePreserializedResources=true AND a reference
-        #    to System.Resources.Extensions.
-        #    NOTE: conditions on TargetFramework cannot be used here because
-        #    Directory.Build.props is imported by Sdk.props → Microsoft.Common.props
-        #    before the project's own <PropertyGroup> is evaluated, so
-        #    $(TargetFramework) is always empty at import time. The fix is applied
-        #    unconditionally; it is a no-op for netstandard/net6+ projects and is
-        #    ignored by legacy packages.config projects (which don't process
-        #    PackageReference items at all).
-        @(
-            '<Project>',
-            '  <PropertyGroup>',
-            '    <GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>',
-            '  </PropertyGroup>',
-            '  <ItemGroup>',
-            '    <PackageReference Include="System.Resources.Extensions" Version="8.0.0" />',
-            '  </ItemGroup>',
-            '</Project>'
-        ) | Set-Content deps/Directory.Build.props -Encoding utf8
+        # deps/Directory.Build.props — sentinel only.
+        # Stops MSBuild's upward traversal so the caller repo's Directory.Build.props
+        # does not propagate into dependency source trees.
+        #
+        # NOTE: MSB3822/MSB3823 (non-string .resx resources) must be fixed in each
+        # affected dependency repo's own .csproj by adding:
+        #   <GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>
+        #   <PackageReference Include="System.Resources.Extensions" Version="8.0.0" />
+        # Injecting these properties here unconditionally is incorrect: legacy
+        # packages.config repos receive the property but not the assembly reference,
+        # causing the exact error we are trying to prevent (MSB3823 requires both to
+        # be present together). The fix belongs in the source repo, not in CI infrastructure.
+        Set-Content deps/Directory.Build.props '<Project />' -Encoding utf8
 
         # Directory.Build.targets sentinel — pair to Directory.Build.props above.
         # Stops MSBuild's upward search for .targets customisations.
@@ -158,9 +147,7 @@ runs:
         # single file constrains all dependency builds without touching any repo's
         # own files (repos with their own global.json are unaffected — first match wins).
         # This prevents the runner's pre-installed higher SDK (e.g. SDK 10 on
-        # windows-latest) from being selected over the configured version. SDK 10
-        # made non-string .resx resources (MSB3822/MSB3823) a hard build error,
-        # breaking repos like BHoM_UI that relied on the previous warning-only behaviour.
+        # windows-latest) from being selected over the configured dotnet_version input.
         # rollForward latestMinor: accept any installed 8.0.x patch without requiring
         # an exact match (avoids failures when setup-dotnet installs a later patch).
         $sdkVersion = "${{ inputs.dotnet_version }}"
