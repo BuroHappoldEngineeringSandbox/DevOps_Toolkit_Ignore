@@ -17,23 +17,36 @@ function Invoke-BHoMBuild {
         [Parameter(Mandatory)][string]$Config
     )
 
-    if ($IsLegacy) {
-        Write-Host "Detected legacy project (packages.config) — using NuGet restore + MSBuild"
-        nuget restore $Target -NonInteractive
-        if ($LASTEXITCODE -ne 0) { throw "NuGet restore failed for $Target" }
+    # Push into the solution/project directory before invoking dotnet.
+    # dotnet resolves global.json by searching upward from the CWD (not from the
+    # solution file path). Running from the repo's own directory ensures the search
+    # traverses: <repo>/ → deps/ (where the SDK-pinning global.json lives) → ...
+    # Without this, CWD is the caller repo root and deps/global.json is never found.
+    # MSBuild/NuGet always take explicit paths so the Push-Location has no effect on them.
+    $targetDir = if (Test-Path $Target -PathType Container) { $Target } else { Split-Path $Target }
+    Push-Location $targetDir
+    try {
+        if ($IsLegacy) {
+            Write-Host "Detected legacy project (packages.config) — using NuGet restore + MSBuild"
+            nuget restore $Target -NonInteractive
+            if ($LASTEXITCODE -ne 0) { throw "NuGet restore failed for $Target" }
 
-        msbuild $Target `
-            /m /p:Configuration=$Config `
-            /p:Platform="Any CPU" `
-            /verbosity:minimal /nologo
-        if ($LASTEXITCODE -ne 0) { throw "MSBuild failed for $Target" }
+            msbuild $Target `
+                /m /p:Configuration=$Config `
+                /p:Platform="Any CPU" `
+                /verbosity:minimal /nologo
+            if ($LASTEXITCODE -ne 0) { throw "MSBuild failed for $Target" }
+        }
+        else {
+            dotnet restore $Target
+            if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed for $Target" }
+
+            dotnet build $Target -c $Config --no-restore --nologo -m
+            if ($LASTEXITCODE -ne 0) { throw "dotnet build failed for $Target" }
+        }
     }
-    else {
-        dotnet restore $Target
-        if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed for $Target" }
-
-        dotnet build $Target -c $Config --no-restore --nologo -m
-        if ($LASTEXITCODE -ne 0) { throw "dotnet build failed for $Target" }
+    finally {
+        Pop-Location
     }
 }
 
