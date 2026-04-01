@@ -93,104 +93,30 @@ jobs:
           configuration:  ${{ inputs.configuration }}
           cache_prefix:   compliance-runner
 
+      - name: Checkout DevOps_Toolkit (compliance scripts)
+        if: steps.changed.outputs.count != '0'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          repository: ${{ github.repository_owner }}/DevOps_Toolkit
+          ref: main
+          path: _toolkit
+          token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+
       - name: Run compliance checks
         id: run_checks
         if: steps.changed.outputs.count != '0'
         run: |
-          $runner = "${{ steps.runner.outputs.runner_exe }}"
-
-          $fileList = @(Get-Content changed_files.txt | ForEach-Object { $_ -replace '/', '\' })
-
-          $checks = @("${{ inputs.compliance_checks }}" -split ' ' | Where-Object { $_ -ne '' })
-
-          $orgUrl = "${{ github.server_url }}/${{ github.repository }}"
-
-          Write-Host "::notice title=Compliance checks::Running: $($checks -join ', ')"
-
-          $anyFailure     = 0
-          $sarifGenerated = "false"
-          $checkResults   = [System.Collections.Generic.List[hashtable]]::new()
-
-          foreach ($check in $checks) {
-            Write-Host "::group::BHoM $check compliance"
-            & $runner $check --output github --org-url "$orgUrl" @fileList
-            $ok = ($LASTEXITCODE -eq 0)
-            if (-not $ok) { $anyFailure = 1 }
-            Write-Host "::endgroup::"
-            $checkResults.Add(@{ Check=$check; Ok=$ok })
-          }
-
-          $sarifDir = "compliance-sarifs"
-          New-Item -ItemType Directory -Force -Path $sarifDir | Out-Null
-          foreach ($check in $checks) {
-            Write-Host "::group::SARIF export ($check)"
-            & $runner $check --output sarif --sarif-file "$sarifDir\compliance-$check.sarif" --org-url "$orgUrl" @fileList
-            Write-Host "::endgroup::"
-          }
-          $sarifGenerated = ((Get-ChildItem $sarifDir -Filter "*.sarif" -ErrorAction SilentlyContinue).Count -gt 0).ToString().ToLower()
-
-          "sarif_generated=$sarifGenerated" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-          if ($env:GITHUB_STEP_SUMMARY) {
-            $mdLines = @("### Compliance check results", "", "| Check | Result |", "|---|---|")
-            foreach ($r in $checkResults) {
-              $icon   = if ($r.Ok) { ":white_check_mark:" } else { ":x:" }
-              $status = if ($r.Ok) { "Passed" } else { "**Failed**" }
-              $mdLines += "| $($r.Check) | $icon $status |"
-            }
-            $mdLines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-          }
-
-          if ($anyFailure -ne 0) {
-            Write-Host "::error::One or more compliance checks failed."
-            exit 1
-          }
+          .\_toolkit\.github\scripts\compliance\run-checks.ps1 `
+            -RunnerExe "${{ steps.runner.outputs.runner_exe }}" `
+            -Checks    "${{ inputs.compliance_checks }}" `
+            -OrgUrl    "${{ github.server_url }}/${{ github.repository }}"
 
       - name: Upload SARIF (per check)
         if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $repo = "${{ github.repository }}"
-          $ref  = "${{ github.ref }}"
-          $sha  = "${{ github.sha }}"
-
-          foreach ($sarifFile in Get-ChildItem compliance-sarifs -Filter "*.sarif" -ErrorAction SilentlyContinue) {
-            $checkName = $sarifFile.BaseName -replace '^compliance-', ''
-            $category  = "bhom-compliance-$checkName-pr-delta"
-
-            # Inject automationDetails.id so GitHub code-scanning treats each check
-            # as a distinct tool run. "category" is not an API field — it is conveyed
-            # inside the SARIF payload via runs[].automationDetails.id.
-            $sarifJson = Get-Content $sarifFile.FullName -Raw | ConvertFrom-Json -Depth 20
-            foreach ($run in $sarifJson.runs) {
-              if ($null -eq $run.PSObject.Properties["automationDetails"]) {
-                $run | Add-Member -NotePropertyName "automationDetails" `
-                                  -NotePropertyValue ([pscustomobject]@{ id = $category }) -Force
-              } else {
-                $run.automationDetails.id = $category
-              }
-            }
-            $patchedSarif = $sarifJson | ConvertTo-Json -Depth 20 -Compress
-
-            # gzip + base64 — required format for the code-scanning SARIF upload API
-            $bytes   = [System.Text.Encoding]::UTF8.GetBytes($patchedSarif)
-            $ms      = [System.IO.MemoryStream]::new()
-            $gz      = [System.IO.Compression.GZipStream]::new($ms, [System.IO.Compression.CompressionMode]::Compress)
-            $gz.Write($bytes, 0, $bytes.Length)
-            $gz.Close()
-            $encoded = [System.Convert]::ToBase64String($ms.ToArray())
-
-            gh api "repos/$repo/code-scanning/sarifs" `
-              -X POST `
-              --field "sarif=$encoded" `
-              --field "ref=$ref" `
-              --field "commit_sha=$sha" `
-              --field "tool_name=BHoM Compliance - $checkName"
-
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "::warning::SARIF upload failed for check: $checkName"
-            } else {
-              Write-Host "Uploaded SARIF for check: $checkName (category: $category)"
-            }
-          }
+          .\_toolkit\.github\scripts\compliance\upload-sarifs.ps1 `
+            -Repo "${{ github.repository }}" `
+            -Ref  "${{ github.ref }}" `
+            -Sha  "${{ github.sha }}"
