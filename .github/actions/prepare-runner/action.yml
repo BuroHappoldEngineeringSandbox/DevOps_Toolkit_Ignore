@@ -92,6 +92,20 @@ runs:
         key: ${{ inputs.cache_prefix }}-${{ runner.os }}-${{ steps.sha.outputs.sha }}-${{ inputs.configuration }}
 
     # ------------------------------------------------------------
+    # Write Directory.Build.props/targets sentinels into the checkout
+    # directory so MSBuild's upward traversal stops here and does not
+    # inherit the caller repo's Directory.Build.props (which may contain
+    # targets such as RestoreBeforeSolutionBuild that are irrelevant —
+    # and harmful — when building an individual .csproj from the runner).
+    # ------------------------------------------------------------
+    - name: Write MSBuild sentinels
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        Set-Content _prepare-runner-toolkit/Directory.Build.props '<Project />' -Encoding utf8
+        Set-Content _prepare-runner-toolkit/Directory.Build.targets '<Project />' -Encoding utf8
+
+    # ------------------------------------------------------------
     # Publish the runner (only when no usable cache was found).
     # ------------------------------------------------------------
     - name: Publish runner (cache miss)
