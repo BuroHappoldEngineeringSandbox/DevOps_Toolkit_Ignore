@@ -24,9 +24,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $fileList = @(Get-Content $FileListPath | ForEach-Object { $_ -replace '/', '\' })
-# Split on whitespace (spaces or newlines) to handle both space-separated values
-# from policy.json and any newline-separated rendering from workflow outputs.
-$checks   = @($Checks -split '\s+' | Where-Object { $_ -ne '' })
+# Split on whitespace. Use explicit .NET Split with separator chars to avoid any
+# PowerShell regex operator quirks in CI environments.
+Write-Host "::debug::Checks raw: '$Checks'"
+Write-Host "::debug::Checks bytes: $([System.Text.Encoding]::UTF8.GetBytes($Checks.PadRight(1)) -join ',')"
+$checks = @($Checks.Trim().Split([char[]](' ', "`t", "`r", "`n"), [System.StringSplitOptions]::RemoveEmptyEntries))
 
 Write-Host "::notice title=Compliance checks::Running: $($checks -join ', ')"
 
