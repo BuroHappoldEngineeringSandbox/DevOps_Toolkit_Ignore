@@ -57,16 +57,15 @@ runs:
         dotnet-version: ${{ inputs.dotnet_version }}
 
     # ------------------------------------------------------------
-    # Capture the HEAD SHA of DevOps_Toolkit using github.action_path
-    # — the directory GitHub already checked out this action from.
-    # Used as the cache key so the binary is only rebuilt when
-    # DevOps_Toolkit source actually changes.
+    # github.action_sha is the commit SHA of the action currently
+    # executing — i.e. the DevOps_Toolkit SHA. No git repo or API
+    # call required; available in all composite action contexts.
     # ------------------------------------------------------------
     - name: Get DevOps_Toolkit HEAD SHA
       id: sha
       shell: pwsh
       run: |
-        $sha = git -C "${{ github.action_path }}" rev-parse HEAD
+        $sha = "${{ github.action_sha }}"
         "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         Write-Host "DevOps_Toolkit SHA: $sha"
 
