@@ -20,9 +20,12 @@ param(
     [string]$FileListPath = "changed_files.txt"
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $fileList = @(Get-Content $FileListPath | ForEach-Object { $_ -replace '/', '\' })
+# -split '\s+' returns String[] via PS operator (not a .NET static method), so .Count
+# resolves correctly under strict mode. Explicitly typed and wrapped in @() for safety.
 [string[]]$checks = @($Checks.Trim() -split '\s+' | Where-Object { $_ -ne '' })
 
 Write-Host "DIAG: PS=$($PSVersionTable.PSVersion) checks=$($checks.Length) files=$($fileList.Count) value='$Checks'"

@@ -5,11 +5,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# ------------------------------------------------------------
-# Runs the appropriate build tool for a given target path.
-# Uses MSBuild for legacy projects (packages.config detected),
-# dotnet build for SDK-style projects.
-# ------------------------------------------------------------
+# Uses MSBuild for legacy (packages.config) repos, dotnet build for SDK-style.
 function Invoke-BHoMBuild {
     param(
         [Parameter(Mandatory)][string]$Target,
@@ -45,8 +41,6 @@ function Invoke-BHoMBuild {
         Pop-Location
     }
 }
-
-# ------------------------------------------------------------
 
 $cloneRoot       = "C:\bhom-deps"
 $depsDir         = "deps"
@@ -133,9 +127,6 @@ $bhomAssemblies = Join-Path $env:ProgramData "BHoM\Assemblies"
 $totalAssemblies = @(Get-ChildItem $bhomAssemblies -Filter *.dll -ErrorAction SilentlyContinue).Count
 Write-Host "Total assemblies in ${bhomAssemblies}: $totalAssemblies"
 
-# ------------------------------------------------------------
-# Step summary: dependency build results table
-# ------------------------------------------------------------
 if ($env:GITHUB_STEP_SUMMARY) {
     $mdLines = @("### Dependency build results", "",
                  "| Repository | Build tool | Result |",

@@ -1,5 +1,9 @@
-name: "Resolve Dependencies (BHoM)"
-description: "Clones dependency graphs (caller or seeds-only), builds, caches, and publishes dependency assemblies."
+name: "Resolve BHoM Dependencies"
+description: |
+  Resolves, builds, and caches BHoM dependency assemblies for a caller repo.
+  Repos are cloned to an isolated root (C:\bhom-deps\) outside the workspace,
+  built with the configured SDK, and their DLLs staged to ProgramData\BHoM\Assemblies
+  via each repo's own PostBuildEvent. Supports caller-graph and seeds modes.
 
 inputs:
   deps_file:
@@ -8,7 +12,7 @@ inputs:
     default: "dependencies.txt"
 
   dotnet_version:
-    description: ".NET SDK version spec"
+    description: "dotnet SDK version to build dependencies with (e.g. '8.0'). Pinned via global.json at the clone root so all dep builds use this version regardless of other SDKs installed on the runner."
     required: false
     default: "8.0"
 
@@ -48,38 +52,24 @@ inputs:
 runs:
   using: "composite"
 
+  # Note: uses cache/restore + cache/save pairs (not actions/cache) because the
+  # post-step auto-save of actions/cache does not fire in cross-repo composite actions.
+
   steps:
-    # ------------------------------------------------------------
-    # Install .NET SDK (no built-in caching)
-    # ------------------------------------------------------------
     - name: Setup .NET SDK
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ inputs.dotnet_version }}
 
-    # ------------------------------------------------------------
-    # NuGet CLI (needed for legacy packages.config restores)
-    # ------------------------------------------------------------
     - name: Setup NuGet CLI
       uses: nuget/setup-nuget@v2
       with:
         nuget-version: "6.x"
 
-    # ------------------------------------------------------------
-    # MSBuild (needed for legacy .NET Framework projects)
-    # ------------------------------------------------------------
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
 
-    # ------------------------------------------------------------
-    # Restore NuGet packages cache
-    # actions/cache/restore@v4 is used instead of actions/cache@v4
-    # because this is a composite action from a different repository.
-    # The post-step save of actions/cache@v4 does not execute in
-    # cross-repo composite action contexts — cache saves must be
-    # explicit inline steps (actions/cache/save@v4) to work correctly.
-    # ------------------------------------------------------------
-    - name: Restore NuGet packages cache
+    - name: Restore NuGet cache
       id: nuget-cache
       uses: actions/cache/restore@v4
       with:
@@ -91,60 +81,31 @@ runs:
         key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj','**/global.json','**/nuget.config') }}
         restore-keys: ${{ runner.os }}-nuget-
 
-    # ------------------------------------------------------------
-    # Environment variables consumed by scripts
-    # ------------------------------------------------------------
-    - name: Compute environment
-      shell: pwsh
-      run: |
-        $tok = '${{ inputs.token }}'
-        if ([string]::IsNullOrWhiteSpace($tok)) { $tok = '${{ github.token }}' }
-        if ([string]::IsNullOrWhiteSpace($tok)) {
-          Write-Error "No GitHub token available — set the token input or ensure github.token is present."
-          exit 1
-        }
-
-        "DEP_TOKEN=$tok" | Out-File -FilePath $env:GITHUB_ENV -Append
-        "CONFIGURATION=${{ inputs.configuration }}" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-    # ------------------------------------------------------------
-    # Prepare dependency directories
-    # ------------------------------------------------------------
     - name: Prepare folders
       shell: pwsh
       run: |
-        # Metadata directory (stores _shas.txt, _order.txt, _selection.txt)
+        # deps/ — metadata only (_shas.txt, _order.txt, _selection.txt)
         New-Item -ItemType Directory -Force -Path deps | Out-Null
-
-        # Isolated clone root — outside the caller repo workspace so repos clone here
-        # with no parent Directory.Build.props, no inherited MSBuild customisations.
-        New-Item -ItemType Directory -Force -Path "C:\bhom-deps" | Out-Null
-
-        # global.json pins the dotnet SDK for all builds under C:\bhom-deps\.
-        # setup-dotnet installs the requested SDK but does not select it — without
-        # this file, dotnet picks the highest installed SDK on the runner (currently
-        # 10.x on windows-latest), not inputs.dotnet_version.
-        # rollForward latestMinor: accept any installed 8.0.x patch.
-        $sdkVersion = "${{ inputs.dotnet_version }}"
-        if ($sdkVersion -match '^\d+\.\d+$') { $sdkVersion = "$sdkVersion.0" }
-        [ordered]@{
-            sdk = [ordered]@{
-                version     = $sdkVersion
-                rollForward = "latestMinor"
-            }
-        } | ConvertTo-Json | Set-Content "C:\bhom-deps\global.json" -Encoding utf8
-
-        # Required by BHoM PostBuildEvent xcopy: every repo's post-build event copies
-        # its output DLLs here. Must exist before any build starts.
-        New-Item -ItemType Directory -Force -Path "$env:ProgramData\BHoM\Assemblies" | Out-Null
-
-        New-Item -ItemType File -Force -Path deps/_shas.txt | Out-Null
+        New-Item -ItemType File   -Force -Path deps/_shas.txt | Out-Null
         if (Test-Path deps/_order.txt)     { Remove-Item deps/_order.txt -Force }
         if (Test-Path deps/_selection.txt) { Remove-Item deps/_selection.txt -Force }
 
-    # ------------------------------------------------------------
-    # Resolve dependency graph (caller or seeds mode)
-    # ------------------------------------------------------------
+        # C:\bhom-deps\ — isolated clone root, sits at the drive root so no caller
+        # repo Directory.Build.props exists above it. Each dependency repo builds
+        # with only its own MSBuild configuration.
+        New-Item -ItemType Directory -Force -Path "C:\bhom-deps" | Out-Null
+
+        # Pin the dotnet SDK for all builds under C:\bhom-deps\. setup-dotnet installs
+        # a SDK but dotnet selects the highest installed version at invocation time
+        # unless a global.json is present. rollForward latestMinor accepts any patch.
+        $sdkVersion = "${{ inputs.dotnet_version }}"
+        if ($sdkVersion -match '^\d+\.\d+$') { $sdkVersion = "$sdkVersion.0" }
+        [ordered]@{ sdk = [ordered]@{ version = $sdkVersion; rollForward = "latestMinor" } } `
+            | ConvertTo-Json | Set-Content "C:\bhom-deps\global.json" -Encoding utf8
+
+        # BHoM PostBuildEvent xcopy targets this path. Must exist before any build.
+        New-Item -ItemType Directory -Force -Path "$env:ProgramData\BHoM\Assemblies" | Out-Null
+
     - name: Resolve dependency graph
       shell: pwsh
       env:
@@ -159,10 +120,7 @@ runs:
           -Seeds "${{ inputs.seeds }}" `
           -AdditionalSeeds "${{ inputs.additional_seeds }}"
 
-    # ------------------------------------------------------------
-    # Composite cache key from dependency SHAs
-    # ------------------------------------------------------------
-    - name: Compute composite cache key from SHAs
+    - name: Compute cache key from dependency SHAs
       id: shas
       shell: pwsh
       run: |
@@ -179,32 +137,17 @@ runs:
 
         "keypart=$keypart" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-    # ------------------------------------------------------------
-    # Restore dependency assembly cache
-    # Cache is keyed on the exact set of dep SHAs so any change to
-    # any dependency invalidates and triggers a full rebuild.
-    # See note above on actions/cache/restore vs actions/cache.
-    # ------------------------------------------------------------
-    - name: Restore dependency assembly cache
+    # cache-hit is true only on an exact key match. A restore-key (prefix) match
+    # restores a stale cache but leaves cache-hit false, triggering a rebuild.
+    - name: Restore assembly cache
       id: cache
       uses: actions/cache/restore@v4
       with:
         path: ${{ env.ProgramData }}\BHoM\Assemblies
-        # dotnet_version intentionally excluded: BHoM assemblies target fixed frameworks
-        # (.NET 4.7.2 via msbuild, net8.0 via SDK) whose output is identical regardless
-        # of which SDK version performed the build.
         key: depsasm-${{ runner.os }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
-        # Fallback prefix: a prefix match may have a different dep composition.
-        # Gate on cache-hit (exact match only) to ensure a rebuild always runs
-        # when the exact set of SHAs does not match.
         restore-keys: |
           depsasm-${{ runner.os }}-${{ inputs.configuration }}-
 
-    # ------------------------------------------------------------
-    # Build dependencies if no exact cache hit (exact key only).
-    # A prefix/restore-key match (cache-hit != 'true') means dep
-    # composition may differ from the cached set — must rebuild.
-    # ------------------------------------------------------------
     - name: Build dependencies
       if: steps.cache.outputs.cache-hit != 'true'
       shell: pwsh
@@ -212,24 +155,14 @@ runs:
         $script = Join-Path $env:GITHUB_ACTION_PATH "scripts/Build-Dependencies.ps1"
         & $script -Configuration "${{ inputs.configuration }}"
 
-    # ------------------------------------------------------------
-    # Save dependency assembly cache (only when a fresh build ran)
-    # Explicit inline save — post-step saves do not work in
-    # cross-repo composite action contexts (see note above).
-    # ------------------------------------------------------------
-    - name: Save dependency assembly cache
+    - name: Save assembly cache
       if: steps.cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
         path: ${{ env.ProgramData }}\BHoM\Assemblies
         key: depsasm-${{ runner.os }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
 
-    # ------------------------------------------------------------
-    # Save NuGet packages cache (when exact key was not found)
-    # Saves after builds so any newly-downloaded packages are included.
-    # Explicit inline save — see note above.
-    # ------------------------------------------------------------
-    - name: Save NuGet packages cache
+    - name: Save NuGet cache
       if: steps.nuget-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:

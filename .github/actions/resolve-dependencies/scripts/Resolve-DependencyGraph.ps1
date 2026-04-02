@@ -19,13 +19,8 @@ New-Item -ItemType Directory -Force -Path $cloneRoot | Out-Null
 
 if (Test-Path $selectFile) { Remove-Item $selectFile -Force }
 
-# ------------------------------------------------------------
-# Read dependency lines, ignoring comments/blank lines, and
-# strictly enforce "one repo per line" with no whitespace.
-# Valid forms:
-#   owner/repo
-#   owner/repo@branch|tag|sha
-# ------------------------------------------------------------
+# Reads non-blank, non-comment lines from a file and validates format.
+# Valid forms: owner/repo or owner/repo@branch|tag|sha (no whitespace).
 function Lines([string]$path) {
     if (Test-Path $path) {
         return Get-Content $path |
@@ -42,9 +37,6 @@ function Lines([string]$path) {
     return @()
 }
 
-# ------------------------------------------------------------
-# Parse "owner/repo" and optional "@ref"
-# ------------------------------------------------------------
 function Parse-RepoSpec([string]$spec) {
     $ref = $null
     if ($spec.Contains("@")) {
@@ -55,19 +47,13 @@ function Parse-RepoSpec([string]$spec) {
     return @{ Key=$spec; Ref=$ref }
 }
 
-# ------------------------------------------------------------
-# Branch preferences:
-#   1) explicit @ref; 2) PR_BRANCH; 3) BASE_BRANCH; 4) "main"
-# ------------------------------------------------------------
+# Branch preference: explicit @ref → PR_BRANCH → BASE_BRANCH → main
 $Prefer   = $env:PR_BRANCH
 if ([string]::IsNullOrWhiteSpace($Prefer)) { $Prefer = "feature/unknown" }
 
 $Fallback = $env:BASE_BRANCH
 if ([string]::IsNullOrWhiteSpace($Fallback)) { $Fallback = "develop" }
 
-# ------------------------------------------------------------
-# Tracking and maps
-# ------------------------------------------------------------
 $cloned  = New-Object System.Collections.Generic.HashSet[string]
 $nameMap = @{}  # owner/repo -> folder
 $pathMap = @{}  # owner/repo -> path
@@ -79,9 +65,6 @@ function Get-FolderName([string]$ownerRepo) {
     return "unknown"
 }
 
-# ------------------------------------------------------------
-# Clone + checkout with selection recording
-# ------------------------------------------------------------
 function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
 
     $name = Get-FolderName $ownerRepo
@@ -138,10 +121,7 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
     return @{ Key=$ownerRepo; Name=$name; Path=$path }
 }
 
-# ------------------------------------------------------------
-# Depth-first expansion: children first, then self
-# Returns List[hashtable] of entries { Key, Name, Path }
-# ------------------------------------------------------------
+# Depth-first expansion: children first, then self. Returns List[hashtable] { Key, Name, Path }.
 function Build-Chain([string]$ownerRepo, [bool]$includeSelf=$false, [string]$ref=$null) {
 
     $chain = New-Object System.Collections.Generic.List[hashtable]
@@ -169,9 +149,6 @@ function Build-Chain([string]$ownerRepo, [bool]$includeSelf=$false, [string]$ref
     return $chain
 }
 
-# ------------------------------------------------------------
-# Compute the set to build (strings), honoring 'mode'
-# ------------------------------------------------------------
 $phaseList = New-Object System.Collections.Generic.List[string]
 
 if ($Mode -eq "seeds") {
@@ -215,13 +192,8 @@ else {
     }
 }
 
-# ------------------------------------------------------------
-# Additional seeds (caller mode only)
-# Appended after the caller graph so that caller assemblies
-# are built first, matching the dependency order BHoMBot used
-# when it resolved the caller repo before Test_Toolkit etc.
-# Ignored when mode=seeds (seeds already accepts multiple repos).
-# ------------------------------------------------------------
+# Additional seeds (caller mode only): appended after caller graph so caller assemblies
+# build first. Ignored when mode=seeds since that mode already accepts multiple repos.
 if ($Mode -ne "seeds" -and -not [string]::IsNullOrWhiteSpace($AdditionalSeeds)) {
     Write-Host "----- Additional seeds (appended to caller graph) -----"
 
@@ -242,9 +214,6 @@ if ($Mode -ne "seeds" -and -not [string]::IsNullOrWhiteSpace($AdditionalSeeds)) 
     }
 }
 
-# ------------------------------------------------------------
-# Merge with de-dup (keep first)
-# ------------------------------------------------------------
 $seen   = New-Object System.Collections.Generic.HashSet[string]
 $merged = New-Object System.Collections.Generic.List[string]
 
@@ -255,17 +224,12 @@ foreach ($k in $phaseList) {
     }
 }
 
-# ------------------------------------------------------------
-# Write _order.txt as owner/repo lines (Build-Dependencies derives path from repo name).
-# ------------------------------------------------------------
+# Write _order.txt — Build-Dependencies derives clone path from repo name.
 $merged | Set-Content -Path $orderOut -Encoding utf8
 
 Write-Host "== Final build order (owner/repo) =="
 Get-Content $orderOut | ForEach-Object { Write-Host "  $_ → C:\bhom-deps\$($_.Split('/')[1])" }
 
-# ------------------------------------------------------------
-# Step summary: dependency checkout table
-# ------------------------------------------------------------
 if (Test-Path $selectFile) {
     Write-Host ""
     Write-Host "== Checkout selections =="
