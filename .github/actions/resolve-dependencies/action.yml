@@ -120,6 +120,20 @@ runs:
         # with no parent Directory.Build.props, no inherited MSBuild customisations.
         New-Item -ItemType Directory -Force -Path "C:\bhom-deps" | Out-Null
 
+        # global.json pins the dotnet SDK for all builds under C:\bhom-deps\.
+        # setup-dotnet installs the requested SDK but does not select it — without
+        # this file, dotnet picks the highest installed SDK on the runner (currently
+        # 10.x on windows-latest), not inputs.dotnet_version.
+        # rollForward latestMinor: accept any installed 8.0.x patch.
+        $sdkVersion = "${{ inputs.dotnet_version }}"
+        if ($sdkVersion -match '^\d+\.\d+$') { $sdkVersion = "$sdkVersion.0" }
+        [ordered]@{
+            sdk = [ordered]@{
+                version     = $sdkVersion
+                rollForward = "latestMinor"
+            }
+        } | ConvertTo-Json | Set-Content "C:\bhom-deps\global.json" -Encoding utf8
+
         # Required by BHoM PostBuildEvent xcopy: every repo's post-build event copies
         # its output DLLs here. Must exist before any build starts.
         New-Item -ItemType Directory -Force -Path "$env:ProgramData\BHoM\Assemblies" | Out-Null
