@@ -131,7 +131,7 @@ foreach ($ownerRepo in $order) {
 # is the canonical output and is cached directly by the action.
 $bhomAssemblies = Join-Path $env:ProgramData "BHoM\Assemblies"
 $totalAssemblies = @(Get-ChildItem $bhomAssemblies -Filter *.dll -ErrorAction SilentlyContinue).Count
-Write-Host "Total assemblies in $bhomAssemblies: $totalAssemblies"
+Write-Host "Total assemblies in ${bhomAssemblies}: $totalAssemblies"
 
 # ------------------------------------------------------------
 # Step summary: dependency build results table
