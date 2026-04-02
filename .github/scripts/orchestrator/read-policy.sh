@@ -13,7 +13,7 @@ fi
 
 RUN_FORMAT=$(jq -r --arg s "$STATE" '.[$s].format' "$POLICY")
 RUN_COMPLIANCE=$(jq -r --arg s "$STATE" '.[$s].compliance' "$POLICY")
-COMPLIANCE_CHECKS=$(jq -r --arg s "$STATE" '.[$s].compliance_checks' "$POLICY")
+COMPLIANCE_CHECKS=$(jq -r --arg s "$STATE" '.[$s].compliance_checks | join(" ")' "$POLICY")
 RUN_DATASET=$(jq -r --arg s "$STATE" '.[$s].dataset' "$POLICY")
 RUN_BUILD=$(jq -r --arg s "$STATE" '.[$s].build' "$POLICY")
 RUN_UNIT_TESTS=$(jq -r --arg s "$STATE" '.[$s]["unit-tests"]' "$POLICY")

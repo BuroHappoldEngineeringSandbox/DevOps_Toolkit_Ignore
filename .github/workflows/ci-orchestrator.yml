@@ -79,24 +79,19 @@ jobs:
           fi
 
       # Topic precedence when multiple labels match: beta > alpha > prototype.
-      - name: Read GitHub Topic
+      - name: Read repo state
         id: topic
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          TOPICS=$(gh api repos/${{ github.repository }} --jq '.topics[]')
-
-          if echo "$TOPICS" | grep -q "bhom-beta"; then
-            STATE="beta"
-          elif echo "$TOPICS" | grep -q "bhom-alpha"; then
-            STATE="alpha"
-          elif echo "$TOPICS" | grep -q "bhom-prototype"; then
-            STATE="prototype"
-          else
-            echo "::error::No valid state topic found. Add bhom-prototype, bhom-alpha or bhom-beta to repo topics."
+          STATE_FILE=".ci/state"
+          if [ ! -f "$STATE_FILE" ]; then
+            echo "::error::Missing .ci/state file. Create it at the repo root containing one of: prototype | alpha | beta"
             exit 1
           fi
-
+          STATE=$(tr -d '[:space:]' < "$STATE_FILE")
+          case "$STATE" in
+            prototype|alpha|beta) ;;
+            *) echo "::error::Invalid state '$STATE' in .ci/state. Must be exactly: prototype | alpha | beta"; exit 1 ;;
+          esac
           echo "state=$STATE" >> "$GITHUB_OUTPUT"
           echo "::notice::Repo state: $STATE"
 
