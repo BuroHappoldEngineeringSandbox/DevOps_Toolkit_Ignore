@@ -1,7 +1,8 @@
 name: "Prepare BHoM Runner"
 description: |
-  Checks out DevOps_Toolkit, then restores or builds a runner binary
-  (e.g. ComplianceRunner, DatasetComplianceRunner) with SHA-keyed caching.
+  Restores or builds a runner binary (e.g. ComplianceRunner, DatasetComplianceRunner)
+  with SHA-keyed caching. Uses github.action_path to reference the DevOps_Toolkit
+  source already checked out by GitHub — no secondary checkout required.
   Returns the path to the published executable.
 
 inputs:
@@ -55,26 +56,17 @@ runs:
       with:
         dotnet-version: ${{ inputs.dotnet_version }}
 
-    # Checkout DevOps_Toolkit into a stable subdirectory.
-    # A fixed path (_prepare-runner-toolkit) avoids collisions if
-    # this action is used more than once in the same job.
     # ------------------------------------------------------------
-    - name: Checkout DevOps_Toolkit (runner source)
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      with:
-        repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
-        ref: main
-        path: _prepare-runner-toolkit
-
-    # ------------------------------------------------------------
-    # Capture the HEAD SHA — used as the cache key so the binary
-    # is only rebuilt when DevOps_Toolkit source actually changes.
+    # Capture the HEAD SHA of DevOps_Toolkit using github.action_path
+    # — the directory GitHub already checked out this action from.
+    # Used as the cache key so the binary is only rebuilt when
+    # DevOps_Toolkit source actually changes.
     # ------------------------------------------------------------
     - name: Get DevOps_Toolkit HEAD SHA
       id: sha
       shell: pwsh
       run: |
-        $sha = git -C _prepare-runner-toolkit rev-parse HEAD
+        $sha = git -C "${{ github.action_path }}" rev-parse HEAD
         "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         Write-Host "DevOps_Toolkit SHA: $sha"
 
@@ -92,27 +84,17 @@ runs:
         key: ${{ inputs.cache_prefix }}-${{ runner.os }}-${{ steps.sha.outputs.sha }}-${{ inputs.configuration }}
 
     # ------------------------------------------------------------
-    # Write Directory.Build.props/targets sentinels into the checkout
-    # directory so MSBuild's upward traversal stops here and does not
-    # inherit the caller repo's Directory.Build.props (which may contain
-    # targets such as RestoreBeforeSolutionBuild that are irrelevant —
-    # and harmful — when building an individual .csproj from the runner).
-    # ------------------------------------------------------------
-    - name: Write MSBuild sentinels
-      if: steps.cache.outputs.cache-hit != 'true'
-      shell: pwsh
-      run: |
-        Set-Content _prepare-runner-toolkit/Directory.Build.props '<Project />' -Encoding utf8
-        Set-Content _prepare-runner-toolkit/Directory.Build.targets '<Project />' -Encoding utf8
-
-    # ------------------------------------------------------------
     # Publish the runner (only when no usable cache was found).
+    # github.action_path points to .github/actions/prepare-runner/
+    # within the DevOps_Toolkit checkout — three levels up is the
+    # repo root, where the runner source lives.
     # ------------------------------------------------------------
     - name: Publish runner (cache miss)
       if: steps.cache.outputs.cache-hit != 'true'
       shell: pwsh
       run: |
-        $proj = Join-Path "_prepare-runner-toolkit" "${{ inputs.runner_project }}"
+        $repoRoot = (Resolve-Path "${{ github.action_path }}/../../..").Path
+        $proj = Join-Path $repoRoot "${{ inputs.runner_project }}"
         if (-not (Test-Path $proj)) {
           Write-Error "Runner project not found at: $proj"
           exit 1
