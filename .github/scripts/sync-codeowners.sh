@@ -117,8 +117,15 @@ generate_codeowners() {
 
   echo ""
   echo "# Platform team owns all governance, CI configuration, and centrally managed files."
-  echo "/.github/      @${ORG}/${PLATFORM_TEAM}"
-  echo "/.editorconfig @${ORG}/${PLATFORM_TEAM}"
+  echo "/.github/           @${ORG}/${PLATFORM_TEAM}"
+  echo "/.ci/state          @${ORG}/${PLATFORM_TEAM}"
+  echo "/.editorconfig      @${ORG}/${PLATFORM_TEAM}"
+  echo "/.gitattributes     @${ORG}/${PLATFORM_TEAM}"
+  echo "/Directory.Build.props @${ORG}/${PLATFORM_TEAM}"
+  echo "/LICENSE            @${ORG}/${PLATFORM_TEAM}"
+  echo "/core.txt           @${ORG}/${PLATFORM_TEAM}"
+  echo "/dependants.txt     @${ORG}/${PLATFORM_TEAM}"
+  echo "/dependencies.txt   @${ORG}/${PLATFORM_TEAM}"
 }
 
 mkdir -p targets
