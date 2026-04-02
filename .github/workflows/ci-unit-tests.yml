@@ -41,21 +41,19 @@ jobs:
           $slns = Get-ChildItem -Path ".ci/unit-tests" -Filter "*.sln" -ErrorAction SilentlyContinue
 
           if (-not $slns) {
-            Write-Host "::notice::No test solution found under .ci/unit-tests/ — unit tests skipped."
-            Write-Host "::notice::To enable unit tests, add a solution at .ci/unit-tests/<RepoName>_Tests.sln"
-            "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          } else {
-            if ($slns.Count -gt 1) {
-              Write-Host "::warning::Multiple solutions found under .ci/unit-tests/ — using: $($slns[0].Name)"
-            }
-            $sln = $slns[0].FullName
-            "skip=false"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            "solution=$sln" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            Write-Host "::notice::Test solution discovered: $sln"
+            Write-Host "::error::No test solution found under .ci/unit-tests/."
+            Write-Host "::error::No test solution found under .ci/unit-tests/. Add a solution at .ci/unit-tests/<RepoName>_Tests.sln to enable unit tests."
+            exit 1
           }
 
+          if ($slns.Count -gt 1) {
+            Write-Host "::warning::Multiple solutions found under .ci/unit-tests/ — using: $($slns[0].Name)"
+          }
+          $sln = $slns[0].FullName
+          "solution=$sln" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "::notice::Test solution discovered: $sln"
+
       - name: Resolve dependencies
-        if: steps.test_check.outputs.skip != 'true'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
         with:
           mode:           caller
@@ -64,15 +62,12 @@ jobs:
           token:          ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Restore test solution
-        if: steps.test_check.outputs.skip != 'true'
         run: dotnet restore "${{ steps.test_check.outputs.solution }}"
 
       - name: Build
-        if: steps.test_check.outputs.skip != 'true'
         run: dotnet build "${{ steps.test_check.outputs.solution }}" --no-restore --configuration ${{ inputs.configuration }}
 
       - name: Run tests
-        if: steps.test_check.outputs.skip != 'true'
         run: |
           $solutionDir = Split-Path "${{ steps.test_check.outputs.solution }}"
           $runsettings = Join-Path $solutionDir ".runsettings"
