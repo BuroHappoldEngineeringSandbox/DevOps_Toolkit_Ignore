@@ -93,15 +93,26 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
         }
 
         if (-not $used) {
-            $hasPrefer = git ls-remote --heads origin $Prefer
+            $hasPrefer   = git ls-remote --heads origin $Prefer
+            $hasFallback = git ls-remote --heads origin $Fallback
             if ($hasPrefer) {
                 git fetch origin $Prefer --depth 1 | Out-Null
                 git checkout -q FETCH_HEAD
                 $selectedRef = $Prefer
-            } else {
+            } elseif ($hasFallback) {
                 git fetch origin $Fallback --depth 1 | Out-Null
                 git checkout -q FETCH_HEAD
                 $selectedRef = $Fallback
+            } else {
+                # Neither PR branch nor base branch exist on this dep repo — fall back to
+                # its remote default branch (main / next / etc.)
+                git fetch origin HEAD --depth 1 | Out-Null
+                git checkout -q FETCH_HEAD
+                $defaultRef = (git ls-remote --symref origin HEAD |
+                    Select-String 'ref: refs/heads/(\S+)\s+HEAD' |
+                    ForEach-Object { $_.Matches[0].Groups[1].Value } |
+                    Select-Object -First 1)
+                $selectedRef = if ($defaultRef) { $defaultRef } else { "(remote default)" }
             }
         }
 
