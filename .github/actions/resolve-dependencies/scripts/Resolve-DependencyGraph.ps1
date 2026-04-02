@@ -84,7 +84,7 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
             $hasTag  = git ls-remote --tags  origin $ref
             if ($hasHead -or $hasTag) {
                 git fetch origin $ref --depth 1 | Out-Null
-                git checkout -q $ref
+                git checkout -q FETCH_HEAD
                 $selectedRef = $ref
                 $used = $true
             } else {
@@ -96,11 +96,11 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
             $hasPrefer = git ls-remote --heads origin $Prefer
             if ($hasPrefer) {
                 git fetch origin $Prefer --depth 1 | Out-Null
-                git checkout -q $Prefer
+                git checkout -q FETCH_HEAD
                 $selectedRef = $Prefer
             } else {
                 git fetch origin $Fallback --depth 1 | Out-Null
-                git checkout -q $Fallback
+                git checkout -q FETCH_HEAD
                 $selectedRef = $Fallback
             }
         }

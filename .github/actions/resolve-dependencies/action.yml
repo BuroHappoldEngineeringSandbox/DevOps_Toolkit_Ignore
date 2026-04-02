@@ -143,7 +143,7 @@ runs:
       id: cache
       uses: actions/cache/restore@v4
       with:
-        path: ${{ env.ProgramData }}\BHoM\Assemblies
+        path: C:\ProgramData\BHoM\Assemblies
         key: depsasm-${{ runner.os }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
         restore-keys: |
           depsasm-${{ runner.os }}-${{ inputs.configuration }}-
@@ -159,7 +159,7 @@ runs:
       if: steps.cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
-        path: ${{ env.ProgramData }}\BHoM\Assemblies
+        path: C:\ProgramData\BHoM\Assemblies
         key: depsasm-${{ runner.os }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
 
     - name: Save NuGet cache
