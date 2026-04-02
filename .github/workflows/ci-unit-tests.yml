@@ -88,7 +88,7 @@ jobs:
           Invoke-Expression $expression
 
       - name: Upload test results (TRX)
-        if: always()
+        if: always() && steps.test_check.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: test-results
@@ -96,7 +96,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Generate coverage report
-        if: always()
+        if: always() && steps.test_check.outcome == 'success'
         run: |
           $files = Get-ChildItem -Path . -Recurse -Filter "coverage.cobertura.xml" -ErrorAction SilentlyContinue
           if (-not $files) {
@@ -110,7 +110,7 @@ jobs:
             -reporttypes:"MarkdownSummaryGithub"
 
       - name: Add coverage to step summary
-        if: always()
+        if: always() && steps.test_check.outcome == 'success'
         run: |
           if (Test-Path "coverage-report/SummaryGithub.md") {
             Get-Content "coverage-report/SummaryGithub.md" |
