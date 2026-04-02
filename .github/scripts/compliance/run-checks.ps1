@@ -21,8 +21,6 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-# Set-StrictMode intentionally omitted: strict mode blocks .Count on .NET-typed
-# String[] returned by static methods in some PS versions, causing false failures.
 
 $fileList = @(Get-Content $FileListPath | ForEach-Object { $_ -replace '/', '\' })
 [string[]]$checks = @($Checks.Trim() -split '\s+' | Where-Object { $_ -ne '' })

@@ -113,52 +113,20 @@ runs:
     - name: Prepare folders
       shell: pwsh
       run: |
+        # Metadata directory (stores _shas.txt, _order.txt, _selection.txt)
         New-Item -ItemType Directory -Force -Path deps | Out-Null
-        New-Item -ItemType Directory -Force -Path deps-assemblies | Out-Null
 
-        # Required by BHoM legacy projects: PostBuildEvent xcopy targets this directory.
-        # Must exist before any msbuild invocation so xcopy does not fail.
+        # Isolated clone root — outside the caller repo workspace so repos clone here
+        # with no parent Directory.Build.props, no inherited MSBuild customisations.
+        New-Item -ItemType Directory -Force -Path "C:\bhom-deps" | Out-Null
+
+        # Required by BHoM PostBuildEvent xcopy: every repo's post-build event copies
+        # its output DLLs here. Must exist before any build starts.
         New-Item -ItemType Directory -Force -Path "$env:ProgramData\BHoM\Assemblies" | Out-Null
 
         New-Item -ItemType File -Force -Path deps/_shas.txt | Out-Null
         if (Test-Path deps/_order.txt)     { Remove-Item deps/_order.txt -Force }
         if (Test-Path deps/_selection.txt) { Remove-Item deps/_selection.txt -Force }
-
-        # deps/Directory.Build.props — sentinel only.
-        # Stops MSBuild's upward traversal so the caller repo's Directory.Build.props
-        # does not propagate into dependency source trees.
-        #
-        # NOTE: MSB3822/MSB3823 (non-string .resx resources) must be fixed in each
-        # affected dependency repo's own .csproj by adding:
-        #   <GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>
-        #   <PackageReference Include="System.Resources.Extensions" Version="8.0.0" />
-        # Injecting these properties here unconditionally is incorrect: legacy
-        # packages.config repos receive the property but not the assembly reference,
-        # causing the exact error we are trying to prevent (MSB3823 requires both to
-        # be present together). The fix belongs in the source repo, not in CI infrastructure.
-        Set-Content deps/Directory.Build.props '<Project />' -Encoding utf8
-
-        # Directory.Build.targets sentinel — pair to Directory.Build.props above.
-        # Stops MSBuild's upward search for .targets customisations.
-        Set-Content deps/Directory.Build.targets '<Project />' -Encoding utf8
-
-        # global.json: pins the dotnet SDK version for every build inside deps/.
-        # dotnet walks upward from each project file to find global.json, so this
-        # single file constrains all dependency builds without touching any repo's
-        # own files (repos with their own global.json are unaffected — first match wins).
-        # This prevents the runner's pre-installed higher SDK (e.g. SDK 10 on
-        # windows-latest) from being selected over the configured dotnet_version input.
-        # rollForward latestMinor: accept any installed 8.0.x patch without requiring
-        # an exact match (avoids failures when setup-dotnet installs a later patch).
-        $sdkVersion = "${{ inputs.dotnet_version }}"
-        # global.json requires a 3-part version; pad "8.0" → "8.0.0"
-        if ($sdkVersion -match '^\d+\.\d+$') { $sdkVersion = "$sdkVersion.0" }
-        [ordered]@{
-            sdk = [ordered]@{
-                version     = $sdkVersion
-                rollForward = "latestMinor"
-            }
-        } | ConvertTo-Json | Set-Content deps/global.json -Encoding utf8
 
     # ------------------------------------------------------------
     # Resolve dependency graph (caller or seeds mode)
@@ -199,25 +167,22 @@ runs:
 
     # ------------------------------------------------------------
     # Restore dependency assembly cache
+    # Cache is keyed on the exact set of dep SHAs so any change to
+    # any dependency invalidates and triggers a full rebuild.
     # See note above on actions/cache/restore vs actions/cache.
     # ------------------------------------------------------------
     - name: Restore dependency assembly cache
       id: cache
       uses: actions/cache/restore@v4
       with:
-        path: deps-assemblies
+        path: ${{ env.ProgramData }}\BHoM\Assemblies
         # dotnet_version intentionally excluded: BHoM assemblies target fixed frameworks
         # (.NET 4.7.2 via msbuild, net8.0 via SDK) whose output is identical regardless
-        # of which SDK version performed the build. Including it caused permanent cache
-        # misses when the caller's dotnet_version differed from the version that saved
-        # the cache (e.g. old compliance.yml defaulted to 10.x, new to 8.x).
+        # of which SDK version performed the build.
         key: depsasm-${{ runner.os }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
-        # Fallback prefix: if the exact key misses, restore the most recent assembly
-        # cache to warm the NuGet/MSBuild package cache for the subsequent build.
-        # IMPORTANT: a prefix match means the dep composition may differ from the
-        # cached set (different repos or SHAs added/removed). The build must still
-        # run. Gate on cache-hit (exact match only) — cache-matched-key is non-empty
-        # for both exact and prefix matches and must NOT be used to skip the build.
+        # Fallback prefix: a prefix match may have a different dep composition.
+        # Gate on cache-hit (exact match only) to ensure a rebuild always runs
+        # when the exact set of SHAs does not match.
         restore-keys: |
           depsasm-${{ runner.os }}-${{ inputs.configuration }}-
 
@@ -242,7 +207,7 @@ runs:
       if: steps.cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
-        path: deps-assemblies
+        path: ${{ env.ProgramData }}\BHoM\Assemblies
         key: depsasm-${{ runner.os }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
 
     # ------------------------------------------------------------

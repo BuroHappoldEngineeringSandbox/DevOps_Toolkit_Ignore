@@ -9,10 +9,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $root       = (Get-Location).Path
-$depsDir    = Join-Path $root "deps"
+$depsDir    = Join-Path $root "deps"        # metadata only (_shas, _order, _selection)
+$cloneRoot  = "C:\bhom-deps"                 # isolated clone root, outside any workspace
 $shaFile    = Join-Path $depsDir "_shas.txt"
 $orderOut   = Join-Path $depsDir "_order.txt"
 $selectFile = Join-Path $depsDir "_selection.txt"
+
+New-Item -ItemType Directory -Force -Path $cloneRoot | Out-Null
 
 if (Test-Path $selectFile) { Remove-Item $selectFile -Force }
 
@@ -82,7 +85,7 @@ function Get-FolderName([string]$ownerRepo) {
 function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
 
     $name = Get-FolderName $ownerRepo
-    $path = Join-Path $depsDir $name
+    $path = Join-Path $cloneRoot $name
 
     if (-not (Test-Path (Join-Path $path ".git"))) {
 
@@ -253,24 +256,12 @@ foreach ($k in $phaseList) {
 }
 
 # ------------------------------------------------------------
-# Map owner/repo -> folder, write _order.txt
+# Write _order.txt as owner/repo lines (Build-Dependencies derives path from repo name).
 # ------------------------------------------------------------
-$folderOrder = $merged | ForEach-Object {
-    if ($nameMap.ContainsKey($_)) {
-        $nameMap[$_]
-    }
-    else {
-        $parts = $_.Split("/")
-        if     ($parts.Length -ge 2) { $parts[1] }
-        elseif ($parts.Length -eq 1) { $parts[0] }
-        else { "unknown" }
-    }
-}
+$merged | Set-Content -Path $orderOut -Encoding utf8
 
-$folderOrder | Set-Content -Path $orderOut -Encoding utf8
-
-Write-Host "== Final build order =="
-Get-Content $orderOut | ForEach-Object { Write-Host "  $_" }
+Write-Host "== Final build order (owner/repo) =="
+Get-Content $orderOut | ForEach-Object { Write-Host "  $_ → C:\bhom-deps\$($_.Split('/')[1])" }
 
 # ------------------------------------------------------------
 # Step summary: dependency checkout table

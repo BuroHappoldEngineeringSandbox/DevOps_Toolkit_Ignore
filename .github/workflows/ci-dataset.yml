@@ -76,12 +76,6 @@ jobs:
           configuration:  ${{ inputs.configuration }}
           token:          ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Stage assemblies to ProgramData\BHoM\Assemblies
-        if: steps.changed.outputs.count != '0'
-        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
-        with:
-          source: deps-assemblies
-
       - name: Prepare DatasetComplianceRunner
         if: steps.changed.outputs.count != '0'
         id: runner

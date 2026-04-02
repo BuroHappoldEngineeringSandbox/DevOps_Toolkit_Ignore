@@ -65,12 +65,6 @@ jobs:
           configuration:  ${{ inputs.configuration }}
           token:          ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Stage assemblies
-        if: steps.test_check.outputs.skip != 'true'
-        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
-        with:
-          source: deps-assemblies
-
       - name: Restore test solution
         if: steps.test_check.outputs.skip != 'true'
         run: dotnet restore "${{ steps.test_check.outputs.solution }}"

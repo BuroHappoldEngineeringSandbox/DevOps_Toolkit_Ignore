@@ -17,12 +17,8 @@ function Invoke-BHoMBuild {
         [Parameter(Mandatory)][string]$Config
     )
 
-    # Push into the solution/project directory before invoking dotnet.
-    # dotnet resolves global.json by searching upward from the CWD (not from the
-    # solution file path). Running from the repo's own directory ensures the search
-    # traverses: <repo>/ → deps/ (where the SDK-pinning global.json lives) → ...
-    # Without this, CWD is the caller repo root and deps/global.json is never found.
-    # MSBuild/NuGet always take explicit paths so the Push-Location has no effect on them.
+    # Push into the repo directory before invoking dotnet/msbuild.
+    # Keeps relative path resolution consistent for both SDK and legacy tools.
     $targetDir = if (Test-Path $Target -PathType Container) { $Target } else { Split-Path $Target }
     Push-Location $targetDir
     try {
@@ -52,23 +48,29 @@ function Invoke-BHoMBuild {
 
 # ------------------------------------------------------------
 
+$cloneRoot       = "C:\bhom-deps"
 $depsDir         = "deps"
 $orderOut        = Join-Path $depsDir "_order.txt"
 $overallFailures = @()
 $buildResults    = [System.Collections.Generic.List[hashtable]]::new()
 
 if (-not (Test-Path $orderOut)) {
-    Write-Warning "No build order file found; falling back to directory enumeration."
-    $order = (Get-ChildItem $depsDir -Directory | Select-Object -ExpandProperty Name)
+    Write-Warning "No build order file found at $orderOut."
+    $order = @()
 }
 else {
+    # _order.txt contains owner/repo lines; derive repo name and path from each.
     $order = Get-Content $orderOut
 }
 
-foreach ($repoName in $order) {
+foreach ($ownerRepo in $order) {
 
-    $repoPath = Join-Path $depsDir $repoName
-    if (-not (Test-Path $repoPath)) { continue }
+    $repoName = $ownerRepo.Split("/")[-1]
+    $repoPath = Join-Path $cloneRoot $repoName
+    if (-not (Test-Path $repoPath)) {
+        Write-Host "::warning::Clone not found at $repoPath — skipping $ownerRepo"
+        continue
+    }
 
     Write-Host "::group::Building $repoName"
 
@@ -124,35 +126,12 @@ foreach ($repoName in $order) {
     Write-Host "::endgroup::"
 }
 
-if (-not (Test-Path "deps-assemblies")) {
-    New-Item -ItemType Directory -Force -Path "deps-assemblies" | Out-Null
-}
-
-# Collect DLLs staged by post-build xcopy events (legacy BHoM projects copy to this directory).
-# This is the primary collection source — it works for both cache-miss builds and is the
-# canonical place BHoM's PostBuildEvent xcopy targets.
+# Assemblies are staged to C:\ProgramData\BHoM\Assemblies by each repo's
+# own PostBuildEvent (xcopy). No collection step needed — that directory
+# is the canonical output and is cached directly by the action.
 $bhomAssemblies = Join-Path $env:ProgramData "BHoM\Assemblies"
-if (Test-Path $bhomAssemblies) {
-    $staged = Get-ChildItem $bhomAssemblies -Filter *.dll -ErrorAction SilentlyContinue
-    $staged | ForEach-Object { Copy-Item $_.FullName "deps-assemblies" -Force }
-    Write-Host "Collected $($staged.Count) assemblies from $bhomAssemblies"
-}
-
-# Also collect from standard SDK output paths for any SDK-style projects that do not use xcopy.
-# Use [IO.Path]::DirectorySeparatorChar to avoid a hardcoded backslash failing on non-Windows agents.
-$binPattern = [IO.Path]::DirectorySeparatorChar + "bin" + [IO.Path]::DirectorySeparatorChar + $Configuration + [IO.Path]::DirectorySeparatorChar
-Get-ChildItem "deps" -Recurse -Filter *.dll -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -match [regex]::Escape($binPattern) } |
-    ForEach-Object { Copy-Item $_.FullName "deps-assemblies" -Force }
-
-$totalAssemblies = (Get-ChildItem "deps-assemblies" -Filter *.dll -ErrorAction SilentlyContinue | Measure-Object).Count
-Write-Host "Total assemblies in deps-assemblies: $totalAssemblies"
-
-Write-Host "Collected assemblies (sample):"
-Get-ChildItem "deps-assemblies" -Filter *.dll -ErrorAction SilentlyContinue |
-    Sort-Object Name |
-    Select-Object -First 60 |
-    ForEach-Object { "  $($_.Name)" }
+$totalAssemblies = @(Get-ChildItem $bhomAssemblies -Filter *.dll -ErrorAction SilentlyContinue).Count
+Write-Host "Total assemblies in $bhomAssemblies: $totalAssemblies"
 
 # ------------------------------------------------------------
 # Step summary: dependency build results table
@@ -169,7 +148,7 @@ if ($env:GITHUB_STEP_SUMMARY) {
     }
 
     $mdLines += ""
-    $mdLines += "_Total assemblies staged: **$totalAssemblies**_"
+    $mdLines += "_Total assemblies in ProgramData\\BHoM\\Assemblies: **$totalAssemblies**_"
 
     $mdLines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 }

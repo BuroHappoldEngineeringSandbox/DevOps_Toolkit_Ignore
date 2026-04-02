@@ -43,11 +43,6 @@ jobs:
           configuration: ${{ inputs.configuration }}
           token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Stage assemblies
-        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/bhom-stage-assemblies@main
-        with:
-          source: deps-assemblies
-
       # Prefer <RepoName>.sln at repo root; else first .sln. packages.config => legacy NuGet+MSBuild path.
       - name: Discover primary solution
         id: solution
