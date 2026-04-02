@@ -41,8 +41,7 @@ jobs:
           $slns = Get-ChildItem -Path ".ci/unit-tests" -Filter "*.sln" -ErrorAction SilentlyContinue
 
           if (-not $slns) {
-            Write-Host "::error::No test solution found under .ci/unit-tests/."
-            Write-Host "::error::No test solution found under .ci/unit-tests/. Add a solution at .ci/unit-tests/<RepoName>_Tests.sln to enable unit tests."
+            Write-Host "::error::No test solution found under .ci/unit-tests/. Add a solution at .ci/unit-tests/<RepoName>_Tests.sln to enable unit tests. See https://bhom.xyz/documentation/Guides-and-Tutorials/Coding-with-BHoM/Testing/ for setup instructions."
             exit 1
           }
 
