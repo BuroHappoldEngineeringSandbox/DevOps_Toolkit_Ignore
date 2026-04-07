@@ -42,6 +42,7 @@ jobs:
 
           if (-not $slns) {
             Write-Host "::warning::No test solution found under .ci/unit-tests/ — unit test step skipped. Add a solution at .ci/unit-tests/<RepoName>_Tests.sln to enable unit tests. See https://bhom.xyz/documentation/Guides-and-Tutorials/Coding-with-BHoM/Testing/ for setup instructions."
+            "found=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
             exit 0
           }
 
@@ -49,10 +50,12 @@ jobs:
             Write-Host "::warning::Multiple solutions found under .ci/unit-tests/ — using: $($slns[0].Name)"
           }
           $sln = $slns[0].FullName
+          "found=true"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "solution=$sln" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "::notice::Test solution discovered: $sln"
 
       - name: Resolve dependencies
+        if: steps.test_check.outputs.found == 'true'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
         with:
           mode:           caller
@@ -61,12 +64,15 @@ jobs:
           token:          ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Restore test solution
+        if: steps.test_check.outputs.found == 'true'
         run: dotnet restore "${{ steps.test_check.outputs.solution }}"
 
       - name: Build
+        if: steps.test_check.outputs.found == 'true'
         run: dotnet build "${{ steps.test_check.outputs.solution }}" --no-restore --configuration ${{ inputs.configuration }}
 
       - name: Run tests
+        if: steps.test_check.outputs.found == 'true'
         run: |
           $solutionDir = Split-Path "${{ steps.test_check.outputs.solution }}"
           $runsettings = Join-Path $solutionDir ".runsettings"
@@ -88,7 +94,7 @@ jobs:
           Invoke-Expression $expression
 
       - name: Upload test results (TRX)
-        if: always() && steps.test_check.outcome == 'success'
+        if: always() && steps.test_check.outputs.found == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: test-results
@@ -96,7 +102,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Generate coverage report
-        if: always() && steps.test_check.outcome == 'success'
+        if: always() && steps.test_check.outputs.found == 'true'
         run: |
           $files = Get-ChildItem -Path . -Recurse -Filter "coverage.cobertura.xml" -ErrorAction SilentlyContinue
           if (-not $files) {
@@ -110,7 +116,7 @@ jobs:
             -reporttypes:"MarkdownSummaryGithub"
 
       - name: Add coverage to step summary
-        if: always() && steps.test_check.outcome == 'success'
+        if: always() && steps.test_check.outputs.found == 'true'
         run: |
           if (Test-Path "coverage-report/SummaryGithub.md") {
             Get-Content "coverage-report/SummaryGithub.md" |
