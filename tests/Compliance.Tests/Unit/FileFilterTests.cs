@@ -29,15 +29,17 @@ public class FileFilterTests
     [TestFixture]
     public class IsDatasetFileTests
     {
-        [TestCase("a/datasets/foo.json",     ExpectedResult = true)]
-        [TestCase("a/Datasets/foo.json",     ExpectedResult = true)]  // segment case-insensitive
-        [TestCase("a/DATASETS/foo.json",     ExpectedResult = true)]  // segment case-insensitive
-        [TestCase(@"a\datasets\foo.json",    ExpectedResult = true)]  // backslash path separators
-        [TestCase("a/datasets/foo.JSON",     ExpectedResult = true)]  // extension case-insensitive
-        [TestCase("a/notdatasets/foo.json",  ExpectedResult = false)] // no /datasets/ segment
-        [TestCase("a/datasets/foo.cs",       ExpectedResult = false)] // wrong extension
-        [TestCase("foo.json",                ExpectedResult = false)] // no /datasets/ in path
-        [TestCase("datasets/foo.json",       ExpectedResult = false)] // no leading slash — not a segment
+        [TestCase("a/datasets/foo.json",      ExpectedResult = true)]
+        [TestCase("a/Datasets/foo.json",      ExpectedResult = true)]  // case-insensitive
+        [TestCase("a/DATASETS/foo.json",      ExpectedResult = true)]  // case-insensitive
+        [TestCase(@"a\datasets\foo.json",     ExpectedResult = true)]  // backslash separators
+        [TestCase("a/datasets/foo.JSON",      ExpectedResult = true)]  // extension case-insensitive
+        [TestCase("a/notdatasets/foo.json",   ExpectedResult = true)]  // bare substring match — mirrors BHoMBot
+        [TestCase("a/datasets/foo.cs",        ExpectedResult = false)] // wrong extension
+        [TestCase("foo.json",                 ExpectedResult = false)] // no "datasets" substring
+        [TestCase("datasets/foo.json",        ExpectedResult = true)]  // root-level
+        [TestCase("DataSets/foo.json",        ExpectedResult = true)]  // root-level, mixed case
+        [TestCase("DataSets/LCA/deep/x.json", ExpectedResult = true)]  // root-level, nested
         public bool IsDatasetFile(string file)
             => FileFilter.IsDatasetFile(file);
     }

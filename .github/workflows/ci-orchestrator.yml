@@ -70,8 +70,8 @@ jobs:
             echo "::notice::No compliance-relevant files changed — compliance job will be skipped."
           fi
 
-          # dataset: *.json anywhere under a datasets/ directory
-          if echo "$CHANGED" | grep -qE '(^|/)datasets/.*\.json$'; then
+          # dataset: *.json files whose path contains "datasets" — mirrors BHoMBot's Contains("datasets") filter
+          if echo "$CHANGED" | grep -qiE 'datasets.*\.json$'; then
             echo "dataset_files_changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "dataset_files_changed=false" >> "$GITHUB_OUTPUT"

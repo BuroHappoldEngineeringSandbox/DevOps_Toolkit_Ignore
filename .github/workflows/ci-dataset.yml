@@ -51,7 +51,7 @@ jobs:
           $files = git diff --name-only --diff-filter=ACMRT "$baseSha" HEAD |
                    Where-Object {
                      $_.ToLower().EndsWith(".json") -and
-                     ($_.Replace('\', '/').ToLower() -match '(^|/)datasets/')
+                     ($_.Replace('\', '/') -match '(?i)datasets')
                    }
 
           $count = ($files | Measure-Object).Count
