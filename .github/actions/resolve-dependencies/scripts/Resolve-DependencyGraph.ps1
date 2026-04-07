@@ -248,10 +248,19 @@ foreach ($k in $phaseList) {
 }
 
 # Write _order.txt — Build-Dependencies derives clone path from repo name.
-$merged | Set-Content -Path $orderOut -Encoding utf8
+# Always create the file (even when empty) so Build-Dependencies.ps1's Get-Content never throws.
+if ($merged.Count -gt 0) {
+    $merged | Set-Content -Path $orderOut -Encoding utf8
+} else {
+    [string]::Empty | Set-Content -Path $orderOut -Encoding utf8
+}
 
 Write-Host "== Final build order (owner/repo) =="
-Get-Content $orderOut | ForEach-Object { Write-Host "  $_ → $cloneRoot\$($_.Split('/')[1])" }
+if ($merged.Count -gt 0) {
+    Get-Content $orderOut | ForEach-Object { Write-Host "  $_ → $cloneRoot\$($_.Split('/')[1])" }
+} else {
+    Write-Host "  (no dependencies)"
+}
 
 if (Test-Path $selectFile) {
     Write-Host ""

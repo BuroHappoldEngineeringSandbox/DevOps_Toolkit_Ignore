@@ -141,8 +141,10 @@ runs:
 
     # cache-hit is true only on an exact key match. A restore-key (prefix) match
     # restores a stale cache but leaves cache-hit false, triggering a rebuild.
+    # Skipped entirely when keypart is empty (no dependencies to build or cache).
     - name: Restore assembly cache
       id: cache
+      if: steps.shas.outputs.keypart != ''
       uses: actions/cache/restore@v4
       with:
         path: C:\ProgramData\BHoM\Assemblies
@@ -151,14 +153,14 @@ runs:
           depsasm-${{ runner.os }}-${{ inputs.configuration }}-
 
     - name: Build dependencies
-      if: steps.cache.outputs.cache-hit != 'true'
+      if: steps.shas.outputs.keypart != '' && steps.cache.outputs.cache-hit != 'true'
       shell: pwsh
       run: |
         $script = Join-Path $env:GITHUB_ACTION_PATH "scripts/Build-Dependencies.ps1"
         & $script -Configuration "${{ inputs.configuration }}" -CloneRoot "C:\bhom-deps"
 
     - name: Save assembly cache
-      if: steps.cache.outputs.cache-hit != 'true'
+      if: steps.shas.outputs.keypart != '' && steps.cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
         path: C:\ProgramData\BHoM\Assemblies
