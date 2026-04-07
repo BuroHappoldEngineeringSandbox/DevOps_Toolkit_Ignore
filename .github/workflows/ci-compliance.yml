@@ -119,11 +119,14 @@ jobs:
 
           $sarifDir = "compliance-sarifs"
           New-Item -ItemType Directory -Force -Path $sarifDir | Out-Null
+          Write-Host "::group::SARIF export"
           foreach ($check in $checks) {
-            Write-Host "::group::SARIF export ($check)"
             & $runnerExe $check --output sarif --sarif-file "$sarifDir\compliance-$check.sarif" --org-url "$orgUrl" @fileList
-            Write-Host "::endgroup::"
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::warning::SARIF generation failed for check: $check (exit $LASTEXITCODE)"
+            }
           }
+          Write-Host "::endgroup::"
 
           $sarifGenerated = (@(Get-ChildItem $sarifDir -Filter "*.sarif" -ErrorAction SilentlyContinue).Count -gt 0).ToString().ToLower()
           "sarif_generated=$sarifGenerated" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
