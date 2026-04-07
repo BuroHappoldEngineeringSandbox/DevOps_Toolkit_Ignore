@@ -5,8 +5,23 @@ public static class FileFilter
     public static bool IsRelevantFile(string file, string checkType)
     {
         if (checkType == "project")
-            return file.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) ||
-                   Path.GetFileName(file).Equals("AssemblyInfo.cs", StringComparison.OrdinalIgnoreCase);
+        {
+            var normalized = file.Replace("\\", "/");
+
+            if (file.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+            {
+                // Exclude test projects and anything under a .ci/ directory.
+                // These are internal tooling and are not subject to BHoM shipping conventions
+                // (target framework, PostBuildEvent, AssemblyVersion, etc.).
+                if (normalized.Contains("/.ci/", StringComparison.OrdinalIgnoreCase))
+                    return false;
+                if (Path.GetFileName(file).EndsWith(".Tests.csproj", StringComparison.OrdinalIgnoreCase))
+                    return false;
+                return true;
+            }
+
+            return Path.GetFileName(file).Equals("AssemblyInfo.cs", StringComparison.OrdinalIgnoreCase);
+        }
 
         // code, copyright, documentation all operate on .cs files.
         return file.EndsWith(".cs", StringComparison.OrdinalIgnoreCase);

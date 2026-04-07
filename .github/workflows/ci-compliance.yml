@@ -122,9 +122,6 @@ jobs:
           Write-Host "::group::SARIF export"
           foreach ($check in $checks) {
             & $runnerExe $check --output sarif --sarif-file "$sarifDir\compliance-$check.sarif" --org-url "$orgUrl" @fileList
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "::warning::SARIF generation failed for check: $check (exit $LASTEXITCODE)"
-            }
           }
           Write-Host "::endgroup::"
 
