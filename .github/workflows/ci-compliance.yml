@@ -86,6 +86,7 @@ jobs:
           output_dir:     out\runner
           configuration:  ${{ inputs.configuration }}
           cache_prefix:   compliance-runner
+          dotnet_version: "10.x"  # runner targets net10.0 — independent of the dep-build SDK (8.0)
 
       - name: Run compliance checks
         id: run_checks
@@ -94,7 +95,7 @@ jobs:
           $runnerExe = "${{ steps.runner.outputs.runner_exe }}"
           $orgUrl    = "${{ github.server_url }}/${{ github.repository }}"
 
-          $fileList = @(Get-Content changed_files.txt | ForEach-Object { $_ -replace '/', '\' })
+          $fileList = @(Get-Content changed_files.txt)
           [string[]]$checks = @("${{ inputs.compliance_checks }}".Trim() -split '\s+' | Where-Object { $_ -ne '' })
 
           Write-Host "::notice title=Compliance checks::Running ($($checks.Length)): $($checks -join ', ')"
@@ -105,28 +106,45 @@ jobs:
             exit 0
           }
 
+          $sarifDir     = "compliance-sarifs"
+          New-Item -ItemType Directory -Force -Path $sarifDir | Out-Null
           $anyFailure   = 0
           $checkResults = [System.Collections.Generic.List[hashtable]]::new()
 
+          # Single pass per check: write SARIF to disk, replay annotations from it afterward.
+          # This avoids invoking the BHoM compliance engine twice per check.
           foreach ($check in $checks) {
             Write-Host "::group::BHoM $check compliance"
-            & $runnerExe $check --output github --org-url "$orgUrl" @fileList
+            $sarifPath = "$sarifDir\compliance-$check.sarif"
+            & $runnerExe $check --output sarif --sarif-file $sarifPath --org-url "$orgUrl" @fileList
             $ok = ($LASTEXITCODE -eq 0)
             if (-not $ok) { $anyFailure = 1 }
             Write-Host "::endgroup::"
             $checkResults.Add(@{ Check = $check; Ok = $ok })
           }
 
-          $sarifDir = "compliance-sarifs"
-          New-Item -ItemType Directory -Force -Path $sarifDir | Out-Null
-          Write-Host "::group::SARIF export"
-          foreach ($check in $checks) {
-            & $runnerExe $check --output sarif --sarif-file "$sarifDir\compliance-$check.sarif" --org-url "$orgUrl" @fileList
-          }
-          Write-Host "::endgroup::"
-
           $sarifGenerated = (@(Get-ChildItem $sarifDir -Filter "*.sarif" -ErrorAction SilentlyContinue).Count -gt 0).ToString().ToLower()
           "sarif_generated=$sarifGenerated" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          # Replay SARIF results as GitHub Actions annotations (::error/::warning).
+          Write-Host "::group::Compliance annotations"
+          foreach ($sarifFile in Get-ChildItem $sarifDir -Filter "*.sarif" -ErrorAction SilentlyContinue) {
+            $sarifObj = Get-Content $sarifFile.FullName -Raw | ConvertFrom-Json -Depth 20
+            foreach ($run in $sarifObj.runs) {
+              if (-not $run.PSObject.Properties["results"]) { continue }
+              foreach ($result in $run.results) {
+                $level  = if ($result.level -eq "error") { "error" } else { "warning" }
+                $loc    = $result.locations[0].physicalLocation
+                $file   = $loc.artifactLocation.uri -replace '\\', '/'
+                $line   = if ($loc.region.PSObject.Properties["startLine"] -and $loc.region.startLine) { $loc.region.startLine } else { 1 }
+                $colN   = if ($loc.region.PSObject.Properties["startColumn"] -and $loc.region.startColumn) { $loc.region.startColumn } else { 0 }
+                $colStr = if ($colN -gt 0) { ",col=$colN" } else { "" }
+                $msg    = $result.message.text -replace "`r", "" -replace "`n", " "
+                Write-Host "::$level file=$file,line=$line$colStr::$msg"
+              }
+            }
+          }
+          Write-Host "::endgroup::"
 
           if ($env:GITHUB_STEP_SUMMARY) {
             $mdLines = @("### Compliance check results", "", "| Check | Result |", "|---|---|")
@@ -144,7 +162,7 @@ jobs:
           }
 
       - name: Upload SARIF (per check)
-        if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && always()
+        if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && !cancelled()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

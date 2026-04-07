@@ -55,7 +55,13 @@ if (-not (Test-Path $orderOut)) {
 }
 else {
     # _order.txt contains owner/repo lines; derive repo name and path from each.
-    $order = Get-Content $orderOut
+    # Filter blank lines that result when the file was written empty (no dependencies).
+    $order = @(Get-Content $orderOut | Where-Object { $_ -match '\S' })
+}
+
+if ($order.Count -eq 0) {
+    Write-Host "::notice::No dependencies to build — skipping dependency build step."
+    exit 0
 }
 
 foreach ($ownerRepo in $order) {

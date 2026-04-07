@@ -2,7 +2,7 @@
   "prototype": {
     "format": true,
     "compliance": false,
-    "compliance_checks": ["copyright", "project"],
+    "compliance_checks": [],
     "dataset": false,
     "build": false,
     "unit-tests": false

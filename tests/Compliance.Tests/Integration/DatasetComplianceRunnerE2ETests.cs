@@ -24,10 +24,10 @@ public class DatasetComplianceRunnerE2ETests
     // ── File filtering — no BHoM call made ────────────────────────────────────
 
     [Test]
-    [Description(".json files not under a /datasets/ path are filtered before BHoM is called.")]
+    [Description(".json files whose path does not contain 'datasets' (case-insensitive) are filtered before BHoM is called.")]
     public void NonDatasetJsonFile_JsonOutput_ExitsWithCode0AndPassStatus()
     {
-        // File has .json extension but no /datasets/ segment in its path — filtered out.
+        // "notadataset" does not contain the substring "datasets" — filtered out by IsDatasetFile.
         var (exitCode, stdout) = RunnerFixture.Run("DatasetComplianceRunner",
             "--output", "json", "notadataset/foo.json");
 

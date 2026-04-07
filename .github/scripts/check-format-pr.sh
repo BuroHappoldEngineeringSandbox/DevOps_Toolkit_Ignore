@@ -27,6 +27,7 @@ fi
 # Find owning .csproj for each changed file (walk up from file dir until we hit a .csproj).
 # Store newline-separated paths per csproj so paths with spaces are safe to iterate.
 declare -A project_files
+declare -a unmapped_files=()
 while IFS= read -r file; do
   [ -z "$file" ] && continue
   dir=$(dirname "$file")
@@ -46,8 +47,14 @@ while IFS= read -r file; do
     else
       project_files["$csproj"]="$file"
     fi
+  else
+    unmapped_files+=("$file")
   fi
 done < changed_dotnet_files.txt
+
+if [ "${#unmapped_files[@]}" -gt 0 ]; then
+  echo "::warning::${#unmapped_files[@]} changed file(s) could not be mapped to a .csproj and were skipped by format check: $(IFS=', '; echo "${unmapped_files[*]}")"
+fi
 
 if [ ${#project_files[@]} -eq 0 ]; then
   echo "::notice::No .csproj found for any changed file — format check skipped."

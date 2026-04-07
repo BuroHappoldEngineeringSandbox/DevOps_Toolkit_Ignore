@@ -85,6 +85,7 @@ jobs:
           output_dir:     out\dataset-runner
           configuration:  ${{ inputs.configuration }}
           cache_prefix:   dataset-runner
+          dotnet_version: "10.x"  # runner targets net10.0 — independent of the dep-build SDK (8.0)
 
       - name: Run dataset compliance
         id: run_checks
@@ -92,7 +93,7 @@ jobs:
         run: |
           $runner = "${{ steps.runner.outputs.runner_exe }}"
 
-          $fileList = @(Get-Content changed_dataset_files.txt | ForEach-Object { $_ -replace '/', '\' })
+          $fileList = @(Get-Content changed_dataset_files.txt)
 
           Write-Host "::group::BHoM dataset compliance"
           & $runner --output github @fileList
@@ -124,7 +125,7 @@ jobs:
           }
 
       - name: Upload SARIF
-        if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && always()
+        if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && !cancelled()
         uses: github/codeql-action/upload-sarif@c10b8064de6f491fea524254123dbe5e09572f13 # v4
         with:
           sarif_file: dataset-compliance.sarif
