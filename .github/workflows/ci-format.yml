@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Checkout caller repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 1
 
@@ -60,7 +60,7 @@ jobs:
 
       - name: Checkout DevOps_Toolkit (format script)
         if: steps.changed.outputs.count != '0'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: ${{ github.repository_owner }}/DevOps_Toolkit
           ref: main
