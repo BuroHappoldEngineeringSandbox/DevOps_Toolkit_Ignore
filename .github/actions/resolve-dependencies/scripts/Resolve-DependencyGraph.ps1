@@ -2,7 +2,8 @@ param(
     [string]$DepsFile         = "dependencies.txt",
     [string]$Mode             = "caller",   # "caller" | "seeds"
     [string]$Seeds            = "",         # used only when Mode = "seeds"
-    [string]$AdditionalSeeds  = ""          # used only when Mode = "caller"; appended after caller graph
+    [string]$AdditionalSeeds  = "",         # used only when Mode = "caller"; appended after caller graph
+    [string]$CloneRoot        = "C:\bhom-deps"  # isolated clone root, outside any workspace
 )
 
 Set-StrictMode -Version Latest
@@ -10,7 +11,7 @@ $ErrorActionPreference = "Stop"
 
 $root       = (Get-Location).Path
 $depsDir    = Join-Path $root "deps"        # metadata only (_shas, _order, _selection)
-$cloneRoot  = "C:\bhom-deps"                 # isolated clone root, outside any workspace
+$cloneRoot  = $CloneRoot
 $shaFile    = Join-Path $depsDir "_shas.txt"
 $orderOut   = Join-Path $depsDir "_order.txt"
 $selectFile = Join-Path $depsDir "_selection.txt"
@@ -55,6 +56,7 @@ $Fallback = $env:BASE_BRANCH
 if ([string]::IsNullOrWhiteSpace($Fallback)) { $Fallback = "develop" }
 
 $cloned  = New-Object System.Collections.Generic.HashSet[string]
+$visited = New-Object System.Collections.Generic.HashSet[string]  # guards against circular deps
 $nameMap = @{}  # owner/repo -> folder
 $pathMap = @{}  # owner/repo -> path
 
@@ -141,6 +143,16 @@ function Build-Chain([string]$ownerRepo, [bool]$includeSelf=$false, [string]$ref
         $cloned.Add($ownerRepo) | Out-Null
         Clone-And-Checkout $ownerRepo $ref | Out-Null
     }
+
+    # Guard against circular dependencies: if this repo's transitive graph has already
+    # been expanded in an ancestor call, skip re-expansion to prevent infinite recursion.
+    if ($visited.Contains($ownerRepo)) {
+        if ($includeSelf -and $pathMap.ContainsKey($ownerRepo)) {
+            $chain.Add(@{ Key=$ownerRepo; Name=$nameMap[$ownerRepo]; Path=$pathMap[$ownerRepo] }) | Out-Null
+        }
+        return $chain
+    }
+    $visited.Add($ownerRepo) | Out-Null
 
     $repoPath = $pathMap[$ownerRepo]
     $depsFileLocal = Join-Path $repoPath "dependencies.txt"
@@ -239,7 +251,7 @@ foreach ($k in $phaseList) {
 $merged | Set-Content -Path $orderOut -Encoding utf8
 
 Write-Host "== Final build order (owner/repo) =="
-Get-Content $orderOut | ForEach-Object { Write-Host "  $_ → C:\bhom-deps\$($_.Split('/')[1])" }
+Get-Content $orderOut | ForEach-Object { Write-Host "  $_ → $cloneRoot\$($_.Split('/')[1])" }
 
 if (Test-Path $selectFile) {
     Write-Host ""

@@ -16,7 +16,13 @@ public static class FileFilter
     /// Returns true for .json files whose path contains a "datasets" segment,
     /// mirroring BHoMBot's DatasetCompliance file filter.
     /// </summary>
-    public static bool IsDatasetFile(string file) =>
-        file.EndsWith(".json", StringComparison.OrdinalIgnoreCase) &&
-        file.Replace("\\", "/").Contains("/datasets/", StringComparison.OrdinalIgnoreCase);
+    public static bool IsDatasetFile(string file)
+    {
+        if (!file.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var normalized = file.Replace("\\", "/");
+        return normalized.Contains("/datasets/", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("datasets/", StringComparison.OrdinalIgnoreCase);
+    }
 }

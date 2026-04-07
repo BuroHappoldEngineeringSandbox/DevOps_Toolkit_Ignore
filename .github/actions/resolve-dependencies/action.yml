@@ -111,6 +111,7 @@ runs:
       env:
         PR_BRANCH: ${{ github.event.pull_request.head.ref }}
         BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+        DEP_TOKEN: ${{ inputs.token }}
       run: |
         $script = Join-Path $env:GITHUB_ACTION_PATH "scripts/Resolve-DependencyGraph.ps1"
 
@@ -118,7 +119,8 @@ runs:
           -DepsFile "${{ inputs.deps_file }}" `
           -Mode "${{ inputs.mode }}" `
           -Seeds "${{ inputs.seeds }}" `
-          -AdditionalSeeds "${{ inputs.additional_seeds }}"
+          -AdditionalSeeds "${{ inputs.additional_seeds }}" `
+          -CloneRoot "C:\bhom-deps"
 
     - name: Compute cache key from dependency SHAs
       id: shas
@@ -153,7 +155,7 @@ runs:
       shell: pwsh
       run: |
         $script = Join-Path $env:GITHUB_ACTION_PATH "scripts/Build-Dependencies.ps1"
-        & $script -Configuration "${{ inputs.configuration }}"
+        & $script -Configuration "${{ inputs.configuration }}" -CloneRoot "C:\bhom-deps"
 
     - name: Save assembly cache
       if: steps.cache.outputs.cache-hit != 'true'

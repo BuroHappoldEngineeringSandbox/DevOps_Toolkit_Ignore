@@ -1,5 +1,6 @@
 param(
-    [string]$Configuration = "Release"
+    [string]$Configuration = "Release",
+    [string]$CloneRoot     = "C:\bhom-deps"
 )
 
 Set-StrictMode -Version Latest
@@ -42,7 +43,7 @@ function Invoke-BHoMBuild {
     }
 }
 
-$cloneRoot       = "C:\bhom-deps"
+$cloneRoot       = $CloneRoot
 $depsDir         = "deps"
 $orderOut        = Join-Path $depsDir "_order.txt"
 $overallFailures = @()

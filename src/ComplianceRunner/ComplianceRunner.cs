@@ -72,6 +72,9 @@ class ComplianceRunner
                         {
                             Status            = e.Status,
                             Message           = e.Message,
+                            Name              = e.Name,
+                            BHoM_Guid         = e.BHoM_Guid,
+                            UTCTime           = e.UTCTime,
                             DocumentationLink = e.DocumentationLink,
                             Location          = new BH.oM.Test.CodeCompliance.Location
                             {
