@@ -87,6 +87,7 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
             if ($hasHead -or $hasTag) {
                 git fetch origin $ref --depth 1 | Out-Null
                 git checkout -q FETCH_HEAD
+                if ($LASTEXITCODE -ne 0) { throw "git checkout FETCH_HEAD failed for '$ownerRepo' (ref=$ref)" }
                 $selectedRef = $ref
                 $used = $true
             } else {
@@ -100,16 +101,19 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
             if ($hasPrefer) {
                 git fetch origin $Prefer --depth 1 | Out-Null
                 git checkout -q FETCH_HEAD
+                if ($LASTEXITCODE -ne 0) { throw "git checkout FETCH_HEAD failed for '$ownerRepo' (ref=$Prefer)" }
                 $selectedRef = $Prefer
             } elseif ($hasFallback) {
                 git fetch origin $Fallback --depth 1 | Out-Null
                 git checkout -q FETCH_HEAD
+                if ($LASTEXITCODE -ne 0) { throw "git checkout FETCH_HEAD failed for '$ownerRepo' (ref=$Fallback)" }
                 $selectedRef = $Fallback
             } else {
                 # Neither PR branch nor base branch exist on this dep repo — fall back to
                 # its remote default branch (main / next / etc.)
                 git fetch origin HEAD --depth 1 | Out-Null
                 git checkout -q FETCH_HEAD
+                if ($LASTEXITCODE -ne 0) { throw "git checkout FETCH_HEAD failed for '$ownerRepo' (remote default)" }
                 $defaultRef = (git ls-remote --symref origin HEAD |
                     Select-String 'ref: refs/heads/(\S+)\s+HEAD' |
                     ForEach-Object { $_.Matches[0].Groups[1].Value } |

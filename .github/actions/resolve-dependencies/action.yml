@@ -168,6 +168,7 @@ runs:
 
     - name: Save NuGet cache
       if: steps.nuget-cache.outputs.cache-hit != 'true'
+      continue-on-error: true  # concurrent jobs race on the same key; first writer wins, others fail benignly
       uses: actions/cache/save@v4
       with:
         path: |

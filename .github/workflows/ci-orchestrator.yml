@@ -43,6 +43,8 @@ jobs:
         id: changed
         shell: bash
         run: |
+          set -euo pipefail
+
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "format_files_changed=false"     >> "$GITHUB_OUTPUT"
             echo "compliance_files_changed=false" >> "$GITHUB_OUTPUT"
