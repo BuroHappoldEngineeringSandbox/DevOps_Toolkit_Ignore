@@ -35,6 +35,7 @@ CODEOWNERS_PATH=".github/CODEOWNERS"
 
 SKIPPED=0
 UPDATED=0
+DRY_RUN_COUNT=0
 FAILURES=()
 # Associative array: repo → space-separated sorted team slugs; built by build_repo_teams_map().
 # Initialised with =() so bash considers it 'set' under set -u.
@@ -167,11 +168,16 @@ while IFS= read -r repo; do
   fi
 
   if [ "${#ASSIGNED_TEAMS[@]}" -eq 0 ]; then
-    echo "::warning::$repo has no product team assigned — a CODEOWNERS PR will be opened with a warning comment."
+    if [ "$DRY_RUN" = "true" ]; then
+      echo "::warning::$repo has no product team assigned — a CODEOWNERS PR would be opened with a warning comment."
+    else
+      echo "::warning::$repo has no product team assigned — a CODEOWNERS PR will be opened with a warning comment."
+    fi
   fi
 
   if [ "$DRY_RUN" = "true" ]; then
     echo "::notice::[dry run] $repo would be updated. Teams: ${ASSIGNED_TEAMS[*]:-none}"
+    DRY_RUN_COUNT=$((DRY_RUN_COUNT + 1))
     echo "::endgroup::"
     continue
   fi
@@ -252,9 +258,14 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     echo ""
     echo "| | Count |"
     echo "|---|---|"
-    echo "| PRs opened | $UPDATED |"
-    echo "| Already up to date | $SKIPPED |"
-    echo "| Failed | ${#FAILURES[@]} |"
+    if [ "$DRY_RUN" = "true" ]; then
+      echo "| Would be updated (dry run) | $DRY_RUN_COUNT |"
+      echo "| Already up to date | $SKIPPED |"
+    else
+      echo "| PRs opened | $UPDATED |"
+      echo "| Already up to date | $SKIPPED |"
+      echo "| Failed | ${#FAILURES[@]} |"
+    fi
 
     if [ "${#FAILURES[@]}" -gt 0 ]; then
       echo ""
@@ -271,4 +282,8 @@ if [ "${#FAILURES[@]}" -gt 0 ]; then
   exit 1
 fi
 
-echo "::notice::Sync complete. PRs opened: $UPDATED  Skipped: $SKIPPED"
+if [ "$DRY_RUN" = "true" ]; then
+  echo "::notice::Sync complete (dry run). Would update: $DRY_RUN_COUNT  Already up to date: $SKIPPED"
+else
+  echo "::notice::Sync complete. PRs opened: $UPDATED  Skipped: $SKIPPED"
+fi
