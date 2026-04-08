@@ -57,21 +57,21 @@ runs:
 
   steps:
     - name: Setup .NET SDK
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5
       with:
         dotnet-version: ${{ inputs.dotnet_version }}
 
     - name: Setup NuGet CLI
-      uses: nuget/setup-nuget@v2
+      uses: nuget/setup-nuget@12c57947e9458a5b976961b08ea0706a17dd71ae # v3
       with:
         nuget-version: "6.x"
 
     - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@v2
+      uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # v3
 
     - name: Restore NuGet cache
       id: nuget-cache
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: |
           ~/.nuget/packages
@@ -145,7 +145,7 @@ runs:
     - name: Restore assembly cache
       id: cache
       if: steps.shas.outputs.keypart != ''
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: C:\ProgramData\BHoM\Assemblies
         key: depsasm-${{ runner.os }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
@@ -161,7 +161,7 @@ runs:
 
     - name: Save assembly cache
       if: steps.shas.outputs.keypart != '' && steps.cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: C:\ProgramData\BHoM\Assemblies
         key: depsasm-${{ runner.os }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
@@ -169,7 +169,7 @@ runs:
     - name: Save NuGet cache
       if: steps.nuget-cache.outputs.cache-hit != 'true'
       continue-on-error: true  # concurrent jobs race on the same key; first writer wins, others fail benignly
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: |
           ~/.nuget/packages

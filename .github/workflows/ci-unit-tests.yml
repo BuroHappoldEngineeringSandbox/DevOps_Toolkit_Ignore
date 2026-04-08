@@ -72,6 +72,7 @@ jobs:
         run: dotnet build "${{ steps.test_check.outputs.solution }}" --no-restore --configuration ${{ inputs.configuration }}
 
       - name: Run tests
+        id: run_tests
         if: steps.test_check.outputs.found == 'true'
         run: |
           $solutionDir = Split-Path "${{ steps.test_check.outputs.solution }}"
@@ -94,15 +95,15 @@ jobs:
           Invoke-Expression $expression
 
       - name: Upload test results (TRX)
-        if: always() && steps.test_check.outputs.found == 'true'
-        uses: actions/upload-artifact@v4
+        if: always() && steps.run_tests.outcome != 'skipped'
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
           name: test-results
           path: "**/TestResults/**/*.trx"
           if-no-files-found: warn
 
       - name: Generate coverage report
-        if: always() && steps.test_check.outputs.found == 'true'
+        if: always() && steps.run_tests.outcome != 'skipped'
         run: |
           $files = Get-ChildItem -Path . -Recurse -Filter "coverage.cobertura.xml" -ErrorAction SilentlyContinue
           if (-not $files) {
@@ -116,7 +117,7 @@ jobs:
             -reporttypes:"MarkdownSummaryGithub"
 
       - name: Add coverage to step summary
-        if: always() && steps.test_check.outputs.found == 'true'
+        if: always() && steps.run_tests.outcome != 'skipped'
         run: |
           if (Test-Path "coverage-report/SummaryGithub.md") {
             Get-Content "coverage-report/SummaryGithub.md" |
