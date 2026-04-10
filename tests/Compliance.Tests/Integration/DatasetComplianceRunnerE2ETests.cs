@@ -62,6 +62,7 @@ public class DatasetComplianceRunnerE2ETests
             Assert.That(root.TryGetProperty("status",          out _), Is.True, "status");
             Assert.That(root.TryGetProperty("checkType",       out _), Is.True, "checkType");
             Assert.That(root.TryGetProperty("title",           out _), Is.True, "title");
+            Assert.That(root.TryGetProperty("summary",         out _), Is.True, "summary");
             Assert.That(root.TryGetProperty("annotationCount", out _), Is.True, "annotationCount");
             Assert.That(root.TryGetProperty("annotations",     out _), Is.True, "annotations");
         });

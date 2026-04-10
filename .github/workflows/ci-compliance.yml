@@ -164,7 +164,7 @@ jobs:
       - name: Upload SARIF (per check)
         if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && !cancelled()
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           foreach ($sarifFile in Get-ChildItem compliance-sarifs -Filter "*.sarif" -ErrorAction SilentlyContinue) {
             $checkName = $sarifFile.BaseName -replace '^compliance-', ''

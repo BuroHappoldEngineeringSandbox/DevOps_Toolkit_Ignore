@@ -13,7 +13,8 @@ public static class FileFilter
                 // Exclude test projects and anything under a .ci/ directory.
                 // These are internal tooling and are not subject to BHoM shipping conventions
                 // (target framework, PostBuildEvent, AssemblyVersion, etc.).
-                if (normalized.Contains("/.ci/", StringComparison.OrdinalIgnoreCase))
+                if (normalized.Contains("/.ci/", StringComparison.OrdinalIgnoreCase) ||
+                    normalized.StartsWith(".ci/", StringComparison.OrdinalIgnoreCase))
                     return false;
                 if (Path.GetFileName(file).EndsWith(".Tests.csproj", StringComparison.OrdinalIgnoreCase))
                     return false;

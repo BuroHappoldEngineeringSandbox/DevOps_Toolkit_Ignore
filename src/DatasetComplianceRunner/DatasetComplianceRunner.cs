@@ -54,6 +54,12 @@ class DatasetComplianceRunner
 
             var resultForThisFile = file.IsValidDataset();
 
+            if (resultForThisFile == null)
+            {
+                Console.WriteLine($"  [SKIP] No result returned for: {file}");
+                continue;
+            }
+
             if (verbose) Console.WriteLine($"  Result Status: {resultForThisFile.Status}");
 
             mergedResult = mergedResult.Merge(resultForThisFile);

@@ -17,7 +17,6 @@ concurrency:
 jobs:
   # dotnet format on PR diffs only; uses DevOps_Toolkit/.github/scripts/check-format-pr.sh + shared .editorconfig.
   format:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
