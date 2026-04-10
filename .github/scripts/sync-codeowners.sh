@@ -105,28 +105,20 @@ generate_codeowners() {
   echo ""
 
   if [ "${#teams[@]}" -gt 0 ]; then
-    echo "# Product team(s) own all source code."
-    local refs=""
-    for slug in "${teams[@]}"; do
-      refs="${refs} @${ORG}/${slug}"
-    done
-    echo "*${refs}"
+    echo "# Discipline team owns all source code."
+    echo "* @${ORG}/${teams[0]}"
   else
-    echo "# WARNING: no product team assigned to this repo."
+    echo "# WARNING: no discipline team assigned to this repo."
     echo "# Assign a team in GitHub and re-run the sync workflow."
   fi
 
   echo ""
   echo "# Platform team owns all governance, CI configuration, and centrally managed files."
   echo "/.github/           @${ORG}/${PLATFORM_TEAM}"
-  echo "/.ci/state          @${ORG}/${PLATFORM_TEAM}"
   echo "/.editorconfig      @${ORG}/${PLATFORM_TEAM}"
   echo "/.gitattributes     @${ORG}/${PLATFORM_TEAM}"
   echo "/Directory.Build.props @${ORG}/${PLATFORM_TEAM}"
   echo "/LICENSE            @${ORG}/${PLATFORM_TEAM}"
-  echo "/core.txt           @${ORG}/${PLATFORM_TEAM}"
-  echo "/dependants.txt     @${ORG}/${PLATFORM_TEAM}"
-  echo "/dependencies.txt   @${ORG}/${PLATFORM_TEAM}"
 }
 
 mkdir -p targets
@@ -151,6 +143,11 @@ while IFS= read -r repo; do
   echo "::group::$ORG/$repo"
 
   mapfile -t ASSIGNED_TEAMS < <(get_product_teams "$repo")
+
+  if [ "${#ASSIGNED_TEAMS[@]}" -gt 1 ]; then
+    echo "::warning::$repo has ${#ASSIGNED_TEAMS[@]} teams assigned (${ASSIGNED_TEAMS[*]}). Using only the first: ${ASSIGNED_TEAMS[0]}. Update team assignments to fix this."
+    ASSIGNED_TEAMS=("${ASSIGNED_TEAMS[0]}")
+  fi
 
   EXPECTED="$(generate_codeowners "$repo" "${ASSIGNED_TEAMS[@]}")"
 
@@ -232,7 +229,7 @@ while IFS= read -r repo; do
         --title "chore: sync CODEOWNERS from team assignments" \
         --body "Automated update of \`.github/CODEOWNERS\` to reflect current GitHub team assignments.
 
-**Assigned product team(s):** \`${TEAM_LIST}\`
+**Assigned product team:** \`${TEAM_LIST}\`
 
 This PR was opened by the [Sync CODEOWNERS](https://github.com/${ORG}/DevOps_Toolkit/actions/workflows/governance-sync-codeowners.yml) workflow. Review the diff and merge once the team assignments are settled.
 
