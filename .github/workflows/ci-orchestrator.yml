@@ -81,21 +81,24 @@ jobs:
             echo "::notice::No dataset files changed — dataset job will be skipped."
           fi
 
-      - name: Read repo state
+      - name: Read repo maturity
         id: state
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          STATE_FILE=".ci/state"
-          if [ ! -f "$STATE_FILE" ]; then
-            echo "::error::Missing .ci/state file. Create it at the repo root containing one of: prototype | alpha | beta"
+          set -euo pipefail
+          STATE=$(gh api "repos/${{ github.repository }}/properties/values" \
+            --jq '.[] | select(.property_name == "maturity") | .value // empty')
+          if [ -z "$STATE" ]; then
+            echo "::error::Repository custom property 'maturity' is not set. Set it to one of: prototype | alpha | beta"
             exit 1
           fi
-          STATE=$(tr -d '[:space:]' < "$STATE_FILE")
           case "$STATE" in
             prototype|alpha|beta) ;;
-            *) echo "::error::Invalid state '$STATE' in .ci/state. Must be exactly: prototype | alpha | beta"; exit 1 ;;
+            *) echo "::error::Invalid maturity value '$STATE'. Must be exactly: prototype | alpha | beta"; exit 1 ;;
           esac
           echo "state=$STATE" >> "$GITHUB_OUTPUT"
-          echo "::notice::Repo state: $STATE"
+          echo "::notice::Repo maturity: $STATE"
 
       # Same org default token can read this repo; pass GH_TOKEN if the toolkit is private elsewhere.
       - name: Checkout policy (DevOps_Toolkit)
