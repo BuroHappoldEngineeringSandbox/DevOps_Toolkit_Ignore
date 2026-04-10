@@ -1,7 +1,7 @@
 name: Distribute .editorconfig
 
 # Triggers whenever config/.editorconfig changes on main, distributing the
-# updated file to every active BHoM repo that carries a bhom-* topic.
+# updated file to every active BHoM repo with a maturity custom property set.
 # PRs are opened as the DevOps GitHub App and auto-merge once CI passes.
 # Run workflow_dispatch with dry_run=true to preview affected repos without
 # opening any PRs.
@@ -66,9 +66,9 @@ jobs:
             echo "${SINGLE_REPO}" > repo-list.txt
             echo "::notice::Single-repo mode — targeting ${SINGLE_REPO}."
           else
-            # Query per topic and deduplicate to avoid complex query syntax.
-            for topic in bhom-prototype bhom-alpha bhom-beta; do
-              gh api "search/repositories?q=org:${ORG}+topic:${topic}&per_page=100" \
+            # Query per maturity value using custom property search and deduplicate.
+            for maturity in prototype alpha beta; do
+              gh api "search/repositories?q=org:${ORG}+props.maturity:${maturity}&per_page=100" \
                 --paginate \
                 --jq '.items[] | select(.archived == false) | .name'
             done \
