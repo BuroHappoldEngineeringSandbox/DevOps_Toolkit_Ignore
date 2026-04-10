@@ -1,6 +1,7 @@
 name: CI Orchestrator
 
 on:
+  pull_request:
   workflow_call:
     secrets:
       GH_TOKEN:

@@ -10,17 +10,17 @@
 #
 # Behaviour per repo:
 #   - Skips if the repo's .editorconfig already matches the canonical file.
-#   - Creates branch devops/update-editorconfig-YYYY-MM-DD (datestamped to
+#   - Creates branch governance/update-editorconfig-YYYY-MM-DD (datestamped to
 #     prevent stale approvals from carrying over if the branch is re-pushed).
-#   - Closes any open PRs targeting older devops/update-editorconfig-* branches
+#   - Closes any open PRs targeting older governance/update-editorconfig-* branches
 #     before opening a fresh PR for the new branch.
 #   - Failures are collected and reported at the end without stopping the loop.
 set -euo pipefail
 
 REPO_FILE="${1:?Usage: distribute-editorconfig.sh <repo-list-file>}"
 CANONICAL_ABS="$(pwd)/config/.editorconfig"
-BRANCH="devops/update-editorconfig-$(date +%Y-%m-%d)"
-BRANCH_PREFIX="devops/update-editorconfig-"
+BRANCH="governance/update-editorconfig-$(date +%Y-%m-%d)"
+BRANCH_PREFIX="governance/update-editorconfig-"
 DRY_RUN="${DRY_RUN:-false}"
 ORG="${ORG:?ORG must be set}"
 

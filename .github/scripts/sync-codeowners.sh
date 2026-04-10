@@ -234,7 +234,7 @@ while IFS= read -r repo; do
 
 **Assigned product team(s):** \`${TEAM_LIST}\`
 
-This PR was opened by the [Sync CODEOWNERS](https://github.com/${ORG}/DevOps_Toolkit/actions/workflows/sync-codeowners.yml) workflow. Review the diff and merge once the team assignments are settled.
+This PR was opened by the [Sync CODEOWNERS](https://github.com/${ORG}/DevOps_Toolkit/actions/workflows/governance-sync-codeowners.yml) workflow. Review the diff and merge once the team assignments are settled.
 
 > [!NOTE]
 > The \`.github/\` folder is owned by \`@${ORG}/${PLATFORM_TEAM}\` — platform team approval is required to merge.")
