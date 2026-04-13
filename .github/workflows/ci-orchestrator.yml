@@ -6,6 +6,10 @@ on:
     secrets:
       GH_TOKEN:
         required: false
+      BHOM_APP_ID:
+        required: false  # BHoMBot GitHub App ID — used to mint a short-lived token for cross-org dep cloning.
+      BHOM_APP_PRIVATE_KEY:
+        required: false  # BHoMBot GitHub App private key (PEM). Required when BHOM_APP_ID is set.
 
 # Under workflow_call, github.workflow is the caller's name; suffix avoids deadlock with caller.
 concurrency:
@@ -81,10 +85,45 @@ jobs:
             echo "::notice::No dataset files changed — dataset job will be skipped."
           fi
 
+      # Mint a short-lived installation token from the BHoMBot GitHub App when credentials
+      # are available. Falls back to GH_TOKEN (PAT) then GITHUB_TOKEN for OSS repos that
+      # have not yet configured the App. The generated token is scoped to the calling repo's
+      # org, so it works identically in both the OSS org and a CSS org using the proxy pattern.
+      #
+      # NOTE: this token is intentionally LOCAL to this setup job — step outputs do not cross
+      # job boundaries. Child workflows (ci-build, ci-compliance, etc.) each regenerate their
+      # own token using the same app-check + create-github-app-token pattern, which is safe
+      # because tokens are short-lived (1h) and the App credentials flow via secrets: inherit.
+      #
+      # secrets context is not available in step `if:` expressions, so we check via an env
+      # var in a preceding step and gate on its output instead.
+      - name: Check App credentials
+        id: app-check
+        shell: bash
+        env:
+          APP_ID: ${{ secrets.BHOM_APP_ID }}
+        run: |
+          if [ -n "$APP_ID" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::BHoMBot App credentials found — will mint short-lived token."
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::BHoMBot App credentials not configured — falling back to GH_TOKEN/GITHUB_TOKEN."
+          fi
+
+      - name: Generate dependency token
+        id: dep-token
+        if: steps.app-check.outputs.available == 'true'
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.BHOM_APP_ID }}
+          private-key: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Read repo maturity
         id: state
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           STATE=$(gh api "repos/${{ github.repository }}/properties/values" \
@@ -107,7 +146,7 @@ jobs:
           repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
           ref: main
           path: _central
-          token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Validate policy.json
         run: bash _central/.github/scripts/orchestrator/validate-policy.sh
@@ -133,8 +172,7 @@ jobs:
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-format.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
-    secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+    secrets: inherit
 
   compliance:
     needs: setup
@@ -147,8 +185,7 @@ jobs:
       dotnet_version:    ${{ needs.setup.outputs.dotnet_version }}
       configuration:     ${{ needs.setup.outputs.configuration }}
       compliance_checks: ${{ needs.setup.outputs.compliance_checks }}
-    secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+    secrets: inherit
 
   dataset:
     needs: setup
@@ -160,8 +197,7 @@ jobs:
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
-    secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+    secrets: inherit
 
   build:
     needs: setup
@@ -172,8 +208,7 @@ jobs:
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
-    secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+    secrets: inherit
 
   # Unit-tests resolves its own deps and builds the test solution independently of ci-build.
   unit-tests:
@@ -185,5 +220,4 @@ jobs:
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
-    secrets:
-      GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+    secrets: inherit

@@ -12,6 +12,10 @@ on:
     secrets:
       GH_TOKEN:
         required: false
+      BHOM_APP_ID:
+        required: false  # BHoMBot GitHub App ID — used to mint a short-lived token for dep cloning.
+      BHOM_APP_PRIVATE_KEY:
+        required: false  # BHoMBot GitHub App private key (PEM). Required when BHOM_APP_ID is set.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-dataset
@@ -66,6 +70,27 @@ jobs:
             Write-Host "::notice::No changed dataset files detected — skipping dataset compliance."
           }
 
+      - name: Check App credentials
+        id: app-check
+        shell: bash
+        env:
+          APP_ID: ${{ secrets.BHOM_APP_ID }}
+        run: |
+          if [ -n "$APP_ID" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate dependency token
+        id: dep-token
+        if: steps.app-check.outputs.available == 'true'
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.BHOM_APP_ID }}
+          private-key: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Resolve dependencies (Test_Toolkit graph)
         if: steps.changed.outputs.count != '0'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
@@ -74,7 +99,7 @@ jobs:
           seeds:          BHoM/Test_Toolkit
           dotnet_version: ${{ inputs.dotnet_version }}
           configuration:  ${{ inputs.configuration }}
-          token:          ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          token:          ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Prepare DatasetComplianceRunner
         if: steps.changed.outputs.count != '0'

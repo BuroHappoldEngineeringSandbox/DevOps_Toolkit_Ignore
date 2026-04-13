@@ -15,6 +15,10 @@ on:
     secrets:
       GH_TOKEN:
         required: false
+      BHOM_APP_ID:
+        required: false  # BHoMBot GitHub App ID — used to mint a short-lived token for dep cloning.
+      BHOM_APP_PRIVATE_KEY:
+        required: false  # BHoMBot GitHub App private key (PEM). Required when BHOM_APP_ID is set.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-compliance
@@ -67,6 +71,27 @@ jobs:
             Write-Host "::notice::No relevant files changed (.cs / .csproj) — skipping compliance."
           }
 
+      - name: Check App credentials
+        id: app-check
+        shell: bash
+        env:
+          APP_ID: ${{ secrets.BHOM_APP_ID }}
+        run: |
+          if [ -n "$APP_ID" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate dependency token
+        id: dep-token
+        if: steps.app-check.outputs.available == 'true'
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.BHOM_APP_ID }}
+          private-key: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Resolve dependencies (Test_Toolkit graph)
         if: steps.changed.outputs.count != '0'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
@@ -75,7 +100,7 @@ jobs:
           seeds:          BHoM/Test_Toolkit
           dotnet_version: ${{ inputs.dotnet_version }}
           configuration:  ${{ inputs.configuration }}
-          token:          ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          token:          ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Prepare ComplianceRunner
         if: steps.changed.outputs.count != '0'
@@ -163,13 +188,16 @@ jobs:
 
       - name: Upload SARIF (per check)
         if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && !cancelled()
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+        shell: pwsh
         run: |
+          # Upload each check's SARIF file via codeql-action upload-sarif equivalent.
+          # Uses gh api directly with codeql-action's supported category field so results
+          # appear per-check in the Security tab rather than merged into one entry.
           foreach ($sarifFile in Get-ChildItem compliance-sarifs -Filter "*.sarif" -ErrorAction SilentlyContinue) {
             $checkName = $sarifFile.BaseName -replace '^compliance-', ''
             $category  = "bhom-compliance-$checkName-pr-delta"
 
+            # Patch automationDetails.id so GitHub groups results by check category.
             $sarifJson = Get-Content $sarifFile.FullName -Raw | ConvertFrom-Json -Depth 20
             foreach ($run in $sarifJson.runs) {
               if ($null -eq $run.PSObject.Properties["automationDetails"]) {
@@ -179,25 +207,17 @@ jobs:
                 $run.automationDetails.id = $category
               }
             }
-            $patchedSarif = $sarifJson | ConvertTo-Json -Depth 20 -Compress
+            $sarifJson | ConvertTo-Json -Depth 20 -Compress |
+              Set-Content $sarifFile.FullName -Encoding utf8
 
-            $bytes   = [System.Text.Encoding]::UTF8.GetBytes($patchedSarif)
-            $ms      = [System.IO.MemoryStream]::new()
-            $gz      = [System.IO.Compression.GZipStream]::new($ms, [System.IO.Compression.CompressionMode]::Compress)
-            $gz.Write($bytes, 0, $bytes.Length)
-            $gz.Close()
-            $encoded = [System.Convert]::ToBase64String($ms.ToArray())
-
-            gh api "repos/${{ github.repository }}/code-scanning/sarifs" `
-              -X POST `
-              --field "sarif=$encoded" `
-              --field "ref=${{ github.ref }}" `
-              --field "commit_sha=${{ github.sha }}" `
-              --field "tool_name=BHoM Compliance - $checkName"
-
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "::warning::SARIF upload failed for check: $checkName"
-            } else {
-              Write-Host "Uploaded SARIF for check: $checkName (category: $category)"
-            }
+            Write-Host "Prepared SARIF for upload: $checkName (category: $category)"
           }
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Upload SARIF files to GitHub Code Scanning
+        if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && !cancelled()
+        uses: github/codeql-action/upload-sarif@c10b8064de6f491fea524254123dbe5e09572f13 # v4
+        with:
+          sarif_file: compliance-sarifs
+          category:   bhom-compliance-pr-delta

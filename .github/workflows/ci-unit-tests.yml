@@ -12,6 +12,10 @@ on:
     secrets:
       GH_TOKEN:
         required: false  # optional PAT for private deps; else github.token
+      BHOM_APP_ID:
+        required: false  # BHoMBot GitHub App ID — used to mint a short-lived token for dep cloning.
+      BHOM_APP_PRIVATE_KEY:
+        required: false  # BHoMBot GitHub App private key (PEM). Required when BHOM_APP_ID is set.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-unit-tests
@@ -54,6 +58,27 @@ jobs:
           "solution=$sln" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "::notice::Test solution discovered: $sln"
 
+      - name: Check App credentials
+        id: app-check
+        shell: bash
+        env:
+          APP_ID: ${{ secrets.BHOM_APP_ID }}
+        run: |
+          if [ -n "$APP_ID" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate dependency token
+        id: dep-token
+        if: steps.app-check.outputs.available == 'true'
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.BHOM_APP_ID }}
+          private-key: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Resolve dependencies
         if: steps.test_check.outputs.found == 'true'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
@@ -61,7 +86,7 @@ jobs:
           mode:           caller
           dotnet_version: ${{ inputs.dotnet_version }}
           configuration:  ${{ inputs.configuration }}
-          token:          ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          token:          ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Restore test solution
         if: steps.test_check.outputs.found == 'true'
@@ -75,24 +100,27 @@ jobs:
         id: run_tests
         if: steps.test_check.outputs.found == 'true'
         run: |
-          $solutionDir = Split-Path "${{ steps.test_check.outputs.solution }}"
+          $sln         = "${{ steps.test_check.outputs.solution }}"
+          $solutionDir = Split-Path $sln
           $runsettings = Join-Path $solutionDir ".runsettings"
-          $settingsArg = if (Test-Path $runsettings) { "--settings `"$runsettings`"" } else { "" }
+          $config      = "${{ inputs.configuration }}"
 
-          if ($settingsArg) {
+          $testArgs = @(
+            $sln
+            "--no-build"
+            "--configuration", $config
+            "--verbosity", "normal"
+            "--logger", "trx;LogFileName=tests.trx"
+            "--results-directory", "TestResults"
+            '--collect:XPlat Code Coverage'
+          )
+
+          if (Test-Path $runsettings) {
             Write-Host "::notice::Using runsettings: $runsettings"
+            $testArgs += "--settings", $runsettings
           }
 
-          $expression = "dotnet test `"${{ steps.test_check.outputs.solution }}`" " +
-                        "--no-build " +
-                        "--configuration ${{ inputs.configuration }} " +
-                        "--verbosity normal " +
-                        '--logger "trx;LogFileName=tests.trx" ' +
-                        "--results-directory TestResults " +
-                        '--collect:"XPlat Code Coverage" ' +
-                        $settingsArg
-
-          Invoke-Expression $expression
+          dotnet test @testArgs
 
       - name: Upload test results (TRX)
         if: always() && steps.run_tests.outcome != 'skipped'

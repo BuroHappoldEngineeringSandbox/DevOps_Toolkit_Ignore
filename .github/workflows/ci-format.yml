@@ -6,9 +6,6 @@ on:
       dotnet_version:
         type: string
         required: true
-    secrets:
-      GH_TOKEN:
-        required: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-format
@@ -37,6 +34,7 @@ jobs:
         id: changed
         shell: bash
         run: |
+          set -euo pipefail
           base_sha="${{ github.event.pull_request.base.sha }}"
           git fetch --depth=1 origin "$base_sha"
 
@@ -61,7 +59,10 @@ jobs:
         if: steps.changed.outputs.count != '0'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          repository: ${{ github.repository_owner }}/DevOps_Toolkit
+          # Hardcoded to the canonical DevOps_Toolkit repo so this works whether the
+          # calling repo lives in the OSS org or a CSS org using the proxy pattern.
+          # No token needed — DevOps_Toolkit is a public repo; GITHUB_TOKEN suffices.
+          repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
           ref: main
           path: _toolkit
 
