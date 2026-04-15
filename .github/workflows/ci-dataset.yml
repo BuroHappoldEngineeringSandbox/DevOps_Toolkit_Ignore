@@ -28,7 +28,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-      security-events: write
       actions: write
     defaults:
       run:
@@ -125,13 +124,6 @@ jobs:
           $ok = ($LASTEXITCODE -eq 0)
           Write-Host "::endgroup::"
 
-          Write-Host "::group::SARIF export (dataset)"
-          & $runner --output sarif --sarif-file dataset-compliance.sarif @fileList
-          Write-Host "::endgroup::"
-          $sarifGenerated = (Test-Path "dataset-compliance.sarif").ToString().ToLower()
-
-          "sarif_generated=$sarifGenerated" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
           if ($env:GITHUB_STEP_SUMMARY) {
             $icon   = if ($ok) { ":white_check_mark:" } else { ":x:" }
             $status = if ($ok) { "Passed" } else { "**Failed**" }
@@ -148,10 +140,3 @@ jobs:
             Write-Host "::error::Dataset compliance check failed."
             exit 1
           }
-
-      - name: Upload SARIF
-        if: steps.changed.outputs.count != '0' && steps.run_checks.outputs.sarif_generated == 'true' && !cancelled()
-        uses: github/codeql-action/upload-sarif@c10b8064de6f491fea524254123dbe5e09572f13 # v4
-        with:
-          sarif_file: dataset-compliance.sarif
-          category:   bhom-dataset-compliance-pr-delta

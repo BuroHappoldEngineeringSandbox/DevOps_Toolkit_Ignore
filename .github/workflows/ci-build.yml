@@ -68,7 +68,7 @@ jobs:
           configuration: ${{ inputs.configuration }}
           token: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
 
-      # Prefer <RepoName>.sln at repo root; else first .sln. packages.config => legacy NuGet+MSBuild path.
+      # Prefer <RepoName>.sln at repo root; else first .sln found.
       - name: Discover primary solution
         id: solution
         run: |
@@ -87,54 +87,44 @@ jobs:
             $slnPath = $found.FullName
           }
 
-          $isLegacy = (Get-ChildItem . -Recurse -Filter packages.config `
-                        -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
+          # Fail fast if packages.config is present — legacy NuGet/MSBuild is not supported.
+          $legacyCount = (Get-ChildItem . -Recurse -Filter packages.config -ErrorAction SilentlyContinue | Measure-Object).Count
+          if ($legacyCount -gt 0) {
+            Write-Host "::error title=Build::packages.config detected — legacy NuGet/MSBuild is not supported. Migrate all projects to SDK-style."
+            exit 1
+          }
 
-          "path=$slnPath"                           | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "is_legacy=$($isLegacy.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "path=$slnPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-          Write-Host "::notice title=Solution::$slnPath (legacy=$isLegacy)"
+          Write-Host "::notice title=Solution::$slnPath"
 
       - name: Build (${{ inputs.configuration }})
-        id: primary-build
         run: |
-          $slnPath  = "${{ steps.solution.outputs.path }}"
-          $isLegacy = "${{ steps.solution.outputs.is_legacy }}" -eq "true"
-          $config   = "${{ inputs.configuration }}"
+          $slnPath = "${{ steps.solution.outputs.path }}"
+          $config  = "${{ inputs.configuration }}"
 
-          if ($isLegacy) {
-            Write-Host "::group::NuGet restore"
-            nuget restore $slnPath -NonInteractive
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            Write-Host "::endgroup::"
+          Write-Host "::group::dotnet restore"
+          dotnet restore $slnPath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "::endgroup::"
 
-            Write-Host "::group::MSBuild $config"
-            msbuild $slnPath /m /p:Configuration=$config /p:Platform="Any CPU" /verbosity:minimal /nologo
-            Write-Host "::endgroup::"
-          } else {
-            Write-Host "::group::dotnet restore"
-            dotnet restore $slnPath
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            Write-Host "::endgroup::"
-
-            Write-Host "::group::dotnet build $config"
-            dotnet build $slnPath --no-restore --configuration $config --nologo -m
-            Write-Host "::endgroup::"
-          }
+          Write-Host "::group::dotnet build $config"
+          dotnet build $slnPath --no-restore --configuration $config --nologo -m
+          Write-Host "::endgroup::"
 
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::error title=Build::Primary solution build failed."
             exit $LASTEXITCODE
           }
 
-      # altConfigs.txt: one org/repo/ConfigName per line; built with MSBuild after the primary build.
+      # altConfigs.txt: one org/repo/ConfigName per line; built with dotnet build after the primary build.
       # See .github/scripts/build-alt-configs.ps1 for full logic and rationale.
+      # Hardcoded to the canonical DevOps_Toolkit repo so this works whether the calling repo
+      # lives in the OSS org or a CSS org using the proxy pattern.
       - name: Checkout DevOps_Toolkit (build scripts)
         if: hashFiles('altConfigs.txt') != ''
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          # Hardcoded to the canonical DevOps_Toolkit repo so this works whether the
-          # calling repo lives in the OSS org or a CSS org using the proxy pattern.
           repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
           ref: main
           path: _toolkit

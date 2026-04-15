@@ -55,13 +55,13 @@ jobs:
             echo "::notice::No changed .NET files — format check skipped."
           fi
 
+      # Hardcoded to the canonical DevOps_Toolkit repo so this works whether the calling repo
+      # lives in the OSS org or a CSS org using the proxy pattern.
+      # No token needed — DevOps_Toolkit is a public repo; GITHUB_TOKEN suffices.
       - name: Checkout DevOps_Toolkit (format script)
         if: steps.changed.outputs.count != '0'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          # Hardcoded to the canonical DevOps_Toolkit repo so this works whether the
-          # calling repo lives in the OSS org or a CSS org using the proxy pattern.
-          # No token needed — DevOps_Toolkit is a public repo; GITHUB_TOKEN suffices.
           repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
           ref: main
           path: _toolkit

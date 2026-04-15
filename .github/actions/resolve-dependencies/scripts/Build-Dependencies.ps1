@@ -6,37 +6,30 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Uses MSBuild for legacy (packages.config) repos, dotnet build for SDK-style.
+# Uses dotnet build for SDK-style repos. Hard-fails on legacy (packages.config) repos.
 function Invoke-BHoMBuild {
     param(
         [Parameter(Mandatory)][string]$Target,
-        [Parameter(Mandatory)][bool]  $IsLegacy,
         [Parameter(Mandatory)][string]$Config
     )
 
-    # Push into the repo directory before invoking dotnet/msbuild.
-    # Keeps relative path resolution consistent for both SDK and legacy tools.
     $targetDir = if (Test-Path $Target -PathType Container) { $Target } else { Split-Path $Target }
+
+    # Fail fast if packages.config is present — legacy NuGet/MSBuild is no longer supported.
+    $legacyCount = (Get-ChildItem $targetDir -Recurse -Filter packages.config -ErrorAction SilentlyContinue | Measure-Object).Count
+    if ($legacyCount -gt 0) {
+        throw "packages.config detected in $targetDir — legacy NuGet/MSBuild is not supported. Migrate all projects to SDK-style."
+    }
+
+    # Push into the repo directory before invoking dotnet.
+    # Keeps relative path resolution consistent.
     Push-Location $targetDir
     try {
-        if ($IsLegacy) {
-            Write-Host "Detected legacy project (packages.config) — using NuGet restore + MSBuild"
-            nuget restore $Target -NonInteractive
-            if ($LASTEXITCODE -ne 0) { throw "NuGet restore failed for $Target" }
+        dotnet restore $Target
+        if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed for $Target" }
 
-            msbuild $Target `
-                /m /p:Configuration=$Config `
-                /p:Platform="Any CPU" `
-                /verbosity:minimal /nologo
-            if ($LASTEXITCODE -ne 0) { throw "MSBuild failed for $Target" }
-        }
-        else {
-            dotnet restore $Target
-            if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed for $Target" }
-
-            dotnet build $Target -c $Config --no-restore --nologo -m
-            if ($LASTEXITCODE -ne 0) { throw "dotnet build failed for $Target" }
-        }
+        dotnet build $Target -c $Config --no-restore --nologo -m
+        if ($LASTEXITCODE -ne 0) { throw "dotnet build failed for $Target" }
     }
     finally {
         Pop-Location
@@ -75,29 +68,14 @@ foreach ($ownerRepo in $order) {
 
     Write-Host "::group::Building $repoName"
 
-    $solution           = Get-ChildItem $repoPath -Recurse -Filter *.sln -ErrorAction SilentlyContinue | Select-Object -First 1
-    $usesPackagesConfig = (Get-ChildItem $repoPath -Recurse -Filter packages.config -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
-    $buildType          = if ($usesPackagesConfig) { "MSBuild (legacy)" } else { "dotnet build (SDK)" }
-    $buildOk            = $true
-
-    # Migration tracking: detect repos that are partially through legacy → SDK migration.
-    # A repo with packages.config alongside SDK-style .csproj files is using MSBuild for
-    # everything (conservative and correct), but should be flagged so the migration effort
-    # can track remaining work. Once all packages.config files are removed the repo flips
-    # automatically to the dotnet build path on the next run.
-    if ($usesPackagesConfig) {
-        $sdkProjectCount = (Get-ChildItem $repoPath -Recurse -Filter *.csproj -ErrorAction SilentlyContinue |
-            Where-Object { (Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue) -match '<Project\s+Sdk=' } |
-            Measure-Object).Count
-        if ($sdkProjectCount -gt 0) {
-            Write-Host "::notice title=Migration::$repoName is partially migrated — $sdkProjectCount SDK-style project(s) detected alongside packages.config. Building via MSBuild (safe for both). Remove all packages.config files to complete the migration to dotnet build."
-        }
-    }
+    $solution  = Get-ChildItem $repoPath -Recurse -Filter *.sln -ErrorAction SilentlyContinue | Select-Object -First 1
+    $buildType = "dotnet build (SDK)"
+    $buildOk   = $true
 
     try {
 
         if ($null -ne $solution) {
-            Invoke-BHoMBuild -Target $solution.FullName -IsLegacy $usesPackagesConfig -Config $Configuration
+            Invoke-BHoMBuild -Target $solution.FullName -Config $Configuration
         }
         else {
             $projects = Get-ChildItem $repoPath -Recurse -Filter *.csproj -ErrorAction SilentlyContinue
@@ -108,7 +86,7 @@ foreach ($ownerRepo in $order) {
             }
             else {
                 foreach ($p in $projects) {
-                    Invoke-BHoMBuild -Target $p.FullName -IsLegacy $usesPackagesConfig -Config $Configuration
+                    Invoke-BHoMBuild -Target $p.FullName -Config $Configuration
                 }
             }
         }

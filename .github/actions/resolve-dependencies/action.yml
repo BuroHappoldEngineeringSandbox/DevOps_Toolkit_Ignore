@@ -61,23 +61,14 @@ runs:
       with:
         dotnet-version: ${{ inputs.dotnet_version }}
 
-    - name: Setup NuGet CLI
-      uses: nuget/setup-nuget@12c57947e9458a5b976961b08ea0706a17dd71ae # v3
-      with:
-        nuget-version: "6.x"
-
-    - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # v3
-
     - name: Restore NuGet cache
       id: nuget-cache
       uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: |
           ~/.nuget/packages
-          ~\AppData\Local\Microsoft\MSBuild\Cache
         # dotnet_version intentionally excluded: NuGet package binaries are SDK-version-agnostic
-        # for the .NET Framework and net8.0 targets used by BHoM repos.
+        # for the net8.0 targets used by BHoM repos.
         key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj','**/global.json','**/nuget.config') }}
         restore-keys: ${{ runner.os }}-nuget-
 

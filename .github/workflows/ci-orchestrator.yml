@@ -85,18 +85,8 @@ jobs:
             echo "::notice::No dataset files changed — dataset job will be skipped."
           fi
 
-      # Mint a short-lived installation token from the BHoMBot GitHub App when credentials
-      # are available. Falls back to GH_TOKEN (PAT) then GITHUB_TOKEN for OSS repos that
-      # have not yet configured the App. The generated token is scoped to the calling repo's
-      # org, so it works identically in both the OSS org and a CSS org using the proxy pattern.
-      #
-      # NOTE: this token is intentionally LOCAL to this setup job — step outputs do not cross
-      # job boundaries. Child workflows (ci-build, ci-compliance, etc.) each regenerate their
-      # own token using the same app-check + create-github-app-token pattern, which is safe
-      # because tokens are short-lived (1h) and the App credentials flow via secrets: inherit.
-      #
-      # secrets context is not available in step `if:` expressions, so we check via an env
-      # var in a preceding step and gate on its output instead.
+      # Token is local to this job; child workflows each regenerate their own via the same pattern.
+      # secrets context is unavailable in step `if:` expressions, so we gate on a prior step's output.
       - name: Check App credentials
         id: app-check
         shell: bash
@@ -105,10 +95,8 @@ jobs:
         run: |
           if [ -n "$APP_ID" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::BHoMBot App credentials found — will mint short-lived token."
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::BHoMBot App credentials not configured — falling back to GH_TOKEN/GITHUB_TOKEN."
           fi
 
       - name: Generate dependency token

@@ -38,10 +38,10 @@ jobs:
         with:
           fetch-depth: 1
 
+      # Convention: .ci/unit-tests/<RepoName>_Tests.sln; name is repo-specific, discovered at runtime.
       - name: Discover test solution
         id: test_check
         run: |
-          # Convention: .ci/unit-tests/<RepoName>_Tests.sln (name is repo-specific, discovered at runtime).
           $slns = Get-ChildItem -Path ".ci/unit-tests" -Filter "*.sln" -ErrorAction SilentlyContinue
 
           if (-not $slns) {
@@ -60,6 +60,7 @@ jobs:
 
       - name: Check App credentials
         id: app-check
+        if: steps.test_check.outputs.found == 'true'
         shell: bash
         env:
           APP_ID: ${{ secrets.BHOM_APP_ID }}
@@ -72,7 +73,7 @@ jobs:
 
       - name: Generate dependency token
         id: dep-token
-        if: steps.app-check.outputs.available == 'true'
+        if: steps.test_check.outputs.found == 'true' && steps.app-check.outputs.available == 'true'
         uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         with:
           app-id: ${{ secrets.BHOM_APP_ID }}
@@ -94,7 +95,7 @@ jobs:
 
       - name: Build
         if: steps.test_check.outputs.found == 'true'
-        run: dotnet build "${{ steps.test_check.outputs.solution }}" --no-restore --configuration ${{ inputs.configuration }}
+        run: dotnet build "${{ steps.test_check.outputs.solution }}" --no-restore --configuration ${{ inputs.configuration }} --nologo
 
       - name: Run tests
         id: run_tests
@@ -138,7 +139,7 @@ jobs:
             Write-Host "::notice::No coverage.cobertura.xml found — skipping report. Add a Cobertura collector to test projects to enable."
             return
           }
-          dotnet tool install -g dotnet-reportgenerator-globaltool
+          dotnet tool install -g dotnet-reportgenerator-globaltool --version 5.3.11
           reportgenerator `
             -reports:"**/TestResults/**/coverage.cobertura.xml" `
             -targetdir:"coverage-report" `
