@@ -106,10 +106,8 @@ run_check() {
     set -e
 
     if [ "$error_exit" -ne 0 ]; then
-      echo "::error::Error-severity format violations found in $label. Run \`dotnet format\` locally to fix."
       any_errors=1
     else
-      echo "::warning::Format warnings found in $label. Run \`dotnet format\` locally to resolve."
       any_warnings=1
     fi
   fi
@@ -153,9 +151,9 @@ for csproj in "${!outside_solution[@]}"; do
 done
 
 if [ "$any_errors" -ne 0 ]; then
-  echo "::error title=Format check::Error-severity format violations found. Run \`dotnet format\` locally to fix before merging."
+  echo "::error title=Format check::Format errors found. Open the log for details, then run \`dotnet format\` locally to fix before merging."
   exit 1
 elif [ "$any_warnings" -ne 0 ]; then
-  echo "::warning title=Format check::Format warnings found. Run \`dotnet format\` locally to resolve."
+  echo "::warning title=Format check::Format warnings found. Open the log for details, then run \`dotnet format\` locally to resolve."
 fi
 exit 0
