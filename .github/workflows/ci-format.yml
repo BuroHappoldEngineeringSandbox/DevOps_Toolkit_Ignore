@@ -35,6 +35,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "count=0" >> "$GITHUB_OUTPUT"
+            echo "::notice::Not a pull request — format check skipped."
+            exit 0
+          fi
+
           base_sha="${{ github.event.pull_request.base.sha }}"
           git fetch --depth=1 origin "$base_sha"
 

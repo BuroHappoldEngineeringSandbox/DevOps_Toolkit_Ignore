@@ -67,6 +67,7 @@ runs:
       with:
         path: |
           ~/.nuget/packages
+          ~\AppData\Local\Microsoft\MSBuild\Cache
         # dotnet_version intentionally excluded: NuGet package binaries are SDK-version-agnostic
         # for the net8.0 targets used by BHoM repos.
         key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj','**/global.json','**/nuget.config') }}

@@ -84,10 +84,11 @@ jobs:
         if: steps.test_check.outputs.found == 'true'
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
         with:
-          mode:           caller
-          dotnet_version: ${{ inputs.dotnet_version }}
-          configuration:  ${{ inputs.configuration }}
-          token:          ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          mode:             caller
+          additional_seeds: BHoM/Test_Toolkit
+          dotnet_version:   ${{ inputs.dotnet_version }}
+          configuration:    ${{ inputs.configuration }}
+          token:            ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
 
       - name: Restore test solution
         if: steps.test_check.outputs.found == 'true'

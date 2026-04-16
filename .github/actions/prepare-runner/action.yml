@@ -123,7 +123,8 @@ runs:
       shell: pwsh
       run: |
         $projName = [IO.Path]::GetFileNameWithoutExtension("${{ inputs.runner_project }}")
-        $exePath  = Join-Path "${{ inputs.output_dir }}" "$projName.exe"
+        $ext      = if ($IsWindows) { '.exe' } else { '' }
+        $exePath  = Join-Path "${{ inputs.output_dir }}" "$projName$ext"
         "path=$exePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         Write-Host "Runner exe: $exePath"
         if (-not (Test-Path $exePath)) {

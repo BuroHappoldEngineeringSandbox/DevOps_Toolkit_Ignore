@@ -66,7 +66,7 @@ jobs:
           mode: caller
           dotnet_version: ${{ inputs.dotnet_version }}
           configuration: ${{ inputs.configuration }}
-          token: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
 
       # Prefer <RepoName>.sln at repo root; else first .sln found.
       - name: Discover primary solution
@@ -128,7 +128,7 @@ jobs:
           repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
           ref: main
           path: _toolkit
-          token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
 
       - name: Build alt configurations
         if: hashFiles('altConfigs.txt') != ''

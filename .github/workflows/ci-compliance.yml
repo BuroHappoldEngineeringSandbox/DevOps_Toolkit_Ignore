@@ -100,7 +100,7 @@ jobs:
           seeds:          BHoM/Test_Toolkit
           dotnet_version: ${{ inputs.dotnet_version }}
           configuration:  ${{ inputs.configuration }}
-          token:          ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          token:          ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
 
       - name: Prepare ComplianceRunner
         if: steps.changed.outputs.count != '0'

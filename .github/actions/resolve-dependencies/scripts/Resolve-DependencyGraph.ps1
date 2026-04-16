@@ -33,7 +33,12 @@ function Lines([string]$path) {
                 }
                 $_
             } |
-            Where-Object { $_ -match "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(@[A-Za-z0-9._/-]+)?$" }
+            ForEach-Object {
+                if (-not ($_ -match "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(@[A-Za-z0-9._/-]+)?$")) {
+                    throw "Malformed dependency entry (invalid format): '$_'. Expected 'owner/repo' or 'owner/repo@ref' using alphanumeric characters, dots, underscores, or hyphens."
+                }
+                $_
+            }
     }
     return @()
 }
@@ -48,17 +53,24 @@ function Parse-RepoSpec([string]$spec) {
     return @{ Key=$spec; Ref=$ref }
 }
 
-# Branch preference: explicit @ref → PR_BRANCH → BASE_BRANCH → main
-$Prefer   = $env:PR_BRANCH
-if ([string]::IsNullOrWhiteSpace($Prefer)) { $Prefer = "feature/unknown" }
-
-$Fallback = $env:BASE_BRANCH
-if ([string]::IsNullOrWhiteSpace($Fallback)) { $Fallback = "develop" }
+# Branch preference: explicit @ref → PR_BRANCH → BASE_BRANCH → remote default
+# $Prefer is null when PR_BRANCH is unset (push/dispatch events) so the ls-remote
+# round-trip is skipped entirely rather than probing a sentinel that never exists.
+$Prefer   = if ([string]::IsNullOrWhiteSpace($env:PR_BRANCH))   { $null } else { $env:PR_BRANCH.Trim() }
+$Fallback = if ([string]::IsNullOrWhiteSpace($env:BASE_BRANCH)) { 'develop' } else { $env:BASE_BRANCH.Trim() }
 
 $cloned  = New-Object System.Collections.Generic.HashSet[string]
 $visited = New-Object System.Collections.Generic.HashSet[string]  # guards against circular deps
 $nameMap = @{}  # owner/repo -> folder
 $pathMap = @{}  # owner/repo -> path
+
+# Route all GitHub HTTPS clones through the token via insteadOf so the token never appears
+# in git command arguments, process listings, or git's own error messages.
+# DEP_TOKEN is masked in Actions logs; writing it into a URL rewrite rule instead of a clone
+# URL also means cloned repos' .git/config files never contain the credential.
+if (-not [string]::IsNullOrWhiteSpace($env:DEP_TOKEN)) {
+    git config --global url."https://x-access-token:$($env:DEP_TOKEN)@github.com/".insteadOf "https://github.com/"
+}
 
 function Get-FolderName([string]$ownerRepo) {
     $parts = $ownerRepo.Split("/")
@@ -74,60 +86,61 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
 
     if (-not (Test-Path (Join-Path $path ".git"))) {
 
-        $url = "https://x-access-token:$env:DEP_TOKEN@github.com/$ownerRepo.git"
-        git clone $url $path --no-tags --depth 1 | Out-Null
+        git clone "https://github.com/$ownerRepo.git" $path --no-tags --depth 1 | Out-Null
 
-        Push-Location $path
         $selectedRef = $null
-        $used = $false
+        Push-Location $path
+        try {
+            $used = $false
 
-        if ($ref) {
-            $hasHead = git ls-remote --heads origin $ref
-            $hasTag  = git ls-remote --tags  origin $ref
-            if ($hasHead -or $hasTag) {
-                git fetch origin $ref --depth 1 | Out-Null
-                git checkout -q FETCH_HEAD
-                if ($LASTEXITCODE -ne 0) { throw "git checkout FETCH_HEAD failed for '$ownerRepo' (ref=$ref)" }
-                $selectedRef = $ref
-                $used = $true
-            } else {
-                Write-Warning "Explicit ref '$ref' not found on '$ownerRepo' — falling back."
+            if ($ref) {
+                $hasHead = git ls-remote --heads origin $ref
+                $hasTag  = git ls-remote --tags  origin $ref
+                if ($hasHead -or $hasTag) {
+                    git fetch origin $ref --depth 1 | Out-Null
+                    git checkout -q FETCH_HEAD
+                    if ($LASTEXITCODE -ne 0) { throw "git checkout FETCH_HEAD failed for '$ownerRepo' (ref=$ref)" }
+                    $selectedRef = $ref
+                    $used = $true
+                } else {
+                    Write-Warning "Explicit ref '$ref' not found on '$ownerRepo' — falling back."
+                }
             }
-        }
 
-        if (-not $used) {
-            $hasPrefer   = git ls-remote --heads origin $Prefer
-            $hasFallback = git ls-remote --heads origin $Fallback
-            if ($hasPrefer) {
-                git fetch origin $Prefer --depth 1 | Out-Null
-                git checkout -q FETCH_HEAD
-                if ($LASTEXITCODE -ne 0) { throw "git checkout FETCH_HEAD failed for '$ownerRepo' (ref=$Prefer)" }
-                $selectedRef = $Prefer
-            } elseif ($hasFallback) {
-                git fetch origin $Fallback --depth 1 | Out-Null
-                git checkout -q FETCH_HEAD
-                if ($LASTEXITCODE -ne 0) { throw "git checkout FETCH_HEAD failed for '$ownerRepo' (ref=$Fallback)" }
-                $selectedRef = $Fallback
-            } else {
-                # Neither PR branch nor base branch exist on this dep repo — fall back to
-                # its remote default branch (main / next / etc.)
-                git fetch origin HEAD --depth 1 | Out-Null
-                git checkout -q FETCH_HEAD
-                if ($LASTEXITCODE -ne 0) { throw "git checkout FETCH_HEAD failed for '$ownerRepo' (remote default)" }
-                $defaultRef = (git ls-remote --symref origin HEAD |
-                    Select-String 'ref: refs/heads/(\S+)\s+HEAD' |
-                    ForEach-Object { $_.Matches[0].Groups[1].Value } |
-                    Select-Object -First 1)
-                $selectedRef = if ($defaultRef) { $defaultRef } else { "(remote default)" }
+            if (-not $used) {
+                $hasPrefer   = if ($Prefer)   { git ls-remote --heads origin $Prefer }   else { $null }
+                $hasFallback = git ls-remote --heads origin $Fallback
+                if ($hasPrefer) {
+                    git fetch origin $Prefer --depth 1 | Out-Null
+                    git checkout -q FETCH_HEAD
+                    if ($LASTEXITCODE -ne 0) { throw "git checkout FETCH_HEAD failed for '$ownerRepo' (ref=$Prefer)" }
+                    $selectedRef = $Prefer
+                } elseif ($hasFallback) {
+                    git fetch origin $Fallback --depth 1 | Out-Null
+                    git checkout -q FETCH_HEAD
+                    if ($LASTEXITCODE -ne 0) { throw "git checkout FETCH_HEAD failed for '$ownerRepo' (ref=$Fallback)" }
+                    $selectedRef = $Fallback
+                } else {
+                    # Neither PR branch nor base branch exist on this dep repo — fall back to
+                    # its remote default branch (main / next / etc.)
+                    git fetch origin HEAD --depth 1 | Out-Null
+                    git checkout -q FETCH_HEAD
+                    if ($LASTEXITCODE -ne 0) { throw "git checkout FETCH_HEAD failed for '$ownerRepo' (remote default)" }
+                    $defaultRef = (git ls-remote --symref origin HEAD |
+                        Select-String 'ref: refs/heads/(\S+)\s+HEAD' |
+                        ForEach-Object { $_.Matches[0].Groups[1].Value } |
+                        Select-Object -First 1)
+                    $selectedRef = if ($defaultRef) { $defaultRef } else { "(remote default)" }
+                }
             }
+
+            $sha = (git rev-parse HEAD).Trim()
+            Add-Content -Path $shaFile    -Value "$ownerRepo $sha"
+            Add-Content -Path $selectFile -Value "$ownerRepo|$name|$selectedRef|$sha"
         }
-
-        $sha = (git rev-parse HEAD).Trim()
-        Add-Content -Path $shaFile -Value "$ownerRepo $sha"
-        Add-Content -Path $selectFile -Value "$ownerRepo|$name|$selectedRef|$sha"
-
-        git remote set-url origin "https://github.com/$ownerRepo.git" | Out-Null
-        Pop-Location
+        finally {
+            Pop-Location
+        }
 
         Write-Host "::notice title=Dependency checkout::$ownerRepo → $selectedRef @ $($sha.Substring(0,7))"
     }

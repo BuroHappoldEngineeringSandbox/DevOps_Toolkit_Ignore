@@ -77,8 +77,9 @@ jobs:
             echo "::notice::No compliance-relevant files changed — compliance job will be skipped."
           fi
 
-          # dataset: *.json files whose path contains "datasets" — mirrors BHoMBot's Contains("datasets") filter
-          if echo "$CHANGED" | grep -qiE 'datasets.*\.json$'; then
+          # dataset: *.json files whose path contains a 'datasets' path segment — mirrors BHoMBot's Contains("datasets") filter.
+          # The (^|/) anchor ensures 'datasets' is a path component, not just a substring of a filename.
+          if echo "$CHANGED" | grep -qiE '(^|/)datasets[^/]*\.json$'; then
             echo "dataset_files_changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "dataset_files_changed=false" >> "$GITHUB_OUTPUT"
@@ -111,7 +112,7 @@ jobs:
       - name: Read repo maturity
         id: state
         env:
-          GH_TOKEN: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
         run: |
           set -euo pipefail
           STATE=$(gh api "repos/${{ github.repository }}/properties/values" \
@@ -134,7 +135,7 @@ jobs:
           repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
           ref: main
           path: _central
-          token: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
 
       - name: Validate policy.json
         run: bash _central/.github/scripts/orchestrator/validate-policy.sh

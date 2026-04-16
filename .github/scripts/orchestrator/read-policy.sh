@@ -23,6 +23,13 @@ if [ "$COMPLIANCE_CHECKS" = "null" ]; then
   exit 1
 fi
 
+# Guard: if compliance is enabled but the check list is empty, the runner would be
+# invoked with no arguments and exit 0 — a silent no-op that looks like a pass.
+if [ "$RUN_COMPLIANCE" = "true" ] && [ -z "$COMPLIANCE_CHECKS" ]; then
+  echo "::error::policy.json compliance_checks resolved to an empty string (state=$STATE). Ensure the array is non-empty when compliance is true."
+  exit 1
+fi
+
 # Catch jq "null" / missing paths if validation and read ever diverge
 # (Avoid "for a b in" — not POSIX; breaks under dash / some bash builds.)
 check_not_json_null() {

@@ -71,6 +71,7 @@ jobs:
 
       - name: Check App credentials
         id: app-check
+        if: steps.changed.outputs.count != '0'
         shell: bash
         env:
           APP_ID: ${{ secrets.BHOM_APP_ID }}
@@ -83,7 +84,7 @@ jobs:
 
       - name: Generate dependency token
         id: dep-token
-        if: steps.app-check.outputs.available == 'true'
+        if: steps.changed.outputs.count != '0' && steps.app-check.outputs.available == 'true'
         uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         with:
           app-id: ${{ secrets.BHOM_APP_ID }}
@@ -98,7 +99,7 @@ jobs:
           seeds:          BHoM/Test_Toolkit
           dotnet_version: ${{ inputs.dotnet_version }}
           configuration:  ${{ inputs.configuration }}
-          token:          ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          token:          ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
 
       - name: Prepare DatasetComplianceRunner
         if: steps.changed.outputs.count != '0'

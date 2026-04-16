@@ -35,11 +35,22 @@ for state in "${POLICY_STATES[@]}"; do
   done
 done
 
-# 3. compliance_checks must be a non-empty array of known tokens.
+# 3. compliance_checks must be a well-formed array of known tokens.
+#    When compliance is enabled for a state, the array must also be non-empty.
 for state in "${POLICY_STATES[@]}"; do
   if ! jq -e --arg s "$state" '.[$s].compliance_checks | type == "array"' "$POLICY" >/dev/null; then
     echo "::error::policy.json $state.compliance_checks must be a JSON array."
     exit 1
+  fi
+
+  # When compliance is enabled, an empty array would cause the runner to be invoked
+  # with no checks — silently exiting 0, looking like a pass.
+  compliance_enabled=$(jq -r --arg s "$state" '.[$s].compliance' "$POLICY")
+  if [ "$compliance_enabled" = "true" ]; then
+    if ! jq -e --arg s "$state" '.[$s].compliance_checks | length > 0' "$POLICY" >/dev/null; then
+      echo "::error::policy.json $state.compliance_checks must be non-empty when compliance is true."
+      exit 1
+    fi
   fi
 
   # Build a jq-safe set of valid tokens from POLICY_COMPLIANCE_CHECK_TOKENS.

@@ -28,7 +28,7 @@ function Invoke-BHoMBuild {
         dotnet restore $Target
         if ($LASTEXITCODE -ne 0) { throw "dotnet restore failed for $Target" }
 
-        dotnet build $Target -c $Config --no-restore --nologo -m
+        dotnet build $Target -c $Config --no-restore --nologo
         if ($LASTEXITCODE -ne 0) { throw "dotnet build failed for $Target" }
     }
     finally {
