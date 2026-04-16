@@ -62,7 +62,7 @@ runs:
     # cross-repo composite actions — saves are explicit inline steps below.
     - name: Restore NuGet cache
       id: nuget-cache
-      uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+      uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
       with:
         path: |
           ~/.nuget/packages
@@ -136,7 +136,7 @@ runs:
     - name: Restore assembly cache
       id: cache
       if: steps.shas.outputs.keypart != ''
-      uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+      uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
       with:
         path: C:\ProgramData\BHoM\Assemblies
         key: depsasm-${{ runner.os }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
@@ -152,7 +152,7 @@ runs:
 
     - name: Save assembly cache
       if: steps.shas.outputs.keypart != '' && steps.cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+      uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
       with:
         path: C:\ProgramData\BHoM\Assemblies
         key: depsasm-${{ runner.os }}-${{ inputs.configuration }}-${{ steps.shas.outputs.keypart }}
@@ -160,7 +160,7 @@ runs:
     - name: Save NuGet cache
       if: steps.nuget-cache.outputs.cache-hit != 'true'
       continue-on-error: true  # concurrent jobs race on the same key; first writer wins, others fail benignly
-      uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+      uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
       with:
         path: |
           ~/.nuget/packages

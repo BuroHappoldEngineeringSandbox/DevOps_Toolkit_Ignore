@@ -11,7 +11,7 @@ on:
         required: true
     secrets:
       GH_TOKEN:
-        required: false
+        required: false  # optional PAT for private deps; else github.token
       BHOM_APP_ID:
         required: false  # BHoMBot GitHub App ID — used to mint a short-lived token for dep cloning.
       BHOM_APP_PRIVATE_KEY:
