@@ -46,21 +46,15 @@ runs:
   using: "composite"
 
   steps:
-    # ------------------------------------------------------------
-    # Ensure the correct .NET SDK version is available for publish.
-    # This makes the action self-sufficient — callers do not need
-    # to set up dotnet before invoking it.
-    # ------------------------------------------------------------
+    # Self-sufficient: callers do not need to set up dotnet before invoking this action.
     - name: Setup .NET SDK
       uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5
       with:
         dotnet-version: ${{ inputs.dotnet_version }}
 
-    # ------------------------------------------------------------
-    # github.action_sha is the commit SHA of the action currently
-    # executing — i.e. the DevOps_Toolkit SHA. No git repo or API
-    # call required; available in all composite action contexts.
-    # ------------------------------------------------------------
+    # github.action_sha is the DevOps_Toolkit commit SHA — available in composite contexts
+    # without a git clone or API call. Keying the cache on this SHA ensures a new binary
+    # is published whenever the action's source changes.
     - name: Get DevOps_Toolkit HEAD SHA
       id: sha
       shell: pwsh
@@ -69,12 +63,8 @@ runs:
         "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         Write-Host "DevOps_Toolkit SHA: $sha"
 
-    # ------------------------------------------------------------
-    # Restore runner binary from cache.
-    # actions/cache/restore@v4 is used (not actions/cache@v4) because
-    # the post-step auto-save of actions/cache@v4 does not fire inside
-    # cross-repo composite actions — saves must be explicit inline steps.
-    # ------------------------------------------------------------
+    # actions/cache/restore (not actions/cache): post-step auto-save does not fire inside
+    # cross-repo composite actions — save is an explicit inline step below.
     - name: Restore runner cache
       id: cache
       uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
@@ -82,12 +72,8 @@ runs:
         path: ${{ inputs.output_dir }}
         key: ${{ inputs.cache_prefix }}-${{ runner.os }}-${{ steps.sha.outputs.sha }}-${{ inputs.configuration }}
 
-    # ------------------------------------------------------------
-    # Publish the runner (only when no usable cache was found).
-    # github.action_path points to .github/actions/prepare-runner/
-    # within the DevOps_Toolkit checkout — three levels up is the
-    # repo root, where the runner source lives.
-    # ------------------------------------------------------------
+    # github.action_path → .github/actions/prepare-runner/ in the DevOps_Toolkit checkout;
+    # three levels up resolves to the repo root where the runner source lives.
     - name: Publish runner (cache miss)
       if: steps.cache.outputs.cache-hit != 'true'
       shell: pwsh
@@ -104,10 +90,6 @@ runs:
           exit $LASTEXITCODE
         }
 
-    # ------------------------------------------------------------
-    # Save the freshly-built binary to cache.
-    # Explicit inline save — see note on restore step above.
-    # ------------------------------------------------------------
     - name: Save runner cache
       if: steps.cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
@@ -115,9 +97,6 @@ runs:
         path: ${{ inputs.output_dir }}
         key: ${{ inputs.cache_prefix }}-${{ runner.os }}-${{ steps.sha.outputs.sha }}-${{ inputs.configuration }}
 
-    # ------------------------------------------------------------
-    # Derive the exe path from the project filename and validate it.
-    # ------------------------------------------------------------
     - name: Resolve runner exe path
       id: exe-path
       shell: pwsh

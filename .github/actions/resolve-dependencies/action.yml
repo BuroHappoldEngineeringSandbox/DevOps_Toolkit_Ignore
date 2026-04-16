@@ -52,15 +52,14 @@ inputs:
 runs:
   using: "composite"
 
-  # Note: uses cache/restore + cache/save pairs (not actions/cache) because the
-  # post-step auto-save of actions/cache does not fire in cross-repo composite actions.
-
   steps:
     - name: Setup .NET SDK
       uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5
       with:
         dotnet-version: ${{ inputs.dotnet_version }}
 
+    # actions/cache/restore (not actions/cache): post-step auto-save does not fire inside
+    # cross-repo composite actions — saves are explicit inline steps below.
     - name: Restore NuGet cache
       id: nuget-cache
       uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
