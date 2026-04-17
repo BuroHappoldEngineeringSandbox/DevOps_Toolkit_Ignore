@@ -1,6 +1,6 @@
 name: Distribute .editorconfig
 
-# Triggers whenever config/.editorconfig changes on main, distributing the
+# Triggers whenever .editorconfig changes on main, distributing the
 # updated file to every active BHoM repo with a maturity custom property set.
 # PRs are opened as the DevOps GitHub App and auto-merge once CI passes.
 # Run workflow_dispatch with dry_run=true to preview affected repos without
@@ -10,7 +10,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'config/.editorconfig'
+      - '.editorconfig'
   workflow_dispatch:
     inputs:
       repo:

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check-format-pr.sh — runs dotnet format --verify-no-changes for .NET files changed in the PR.
 # Expects: caller repo root as cwd, changed_dotnet_files.txt present.
-# Applies canonical DevOps_Toolkit/config/.editorconfig regardless of any repo-local config.
+# Applies canonical DevOps_Toolkit/.editorconfig regardless of any repo-local config.
 # Severity: error → job fails (PR blocked); warning → annotation only; suggestion → ignored.
 # Multi-solution repos: uses the first .sln sorted by name (LC_ALL=C); other solutions ignored.
 
@@ -10,7 +10,7 @@ set -euo pipefail
 # Apply canonical EditorConfig.
 # TOOLKIT_DIR is the path where DevOps_Toolkit was checked out (default: _toolkit).
 TOOLKIT_DIR="${TOOLKIT_DIR:-_toolkit}"
-CANONICAL_EDITORCONFIG="$TOOLKIT_DIR/config/.editorconfig"
+CANONICAL_EDITORCONFIG="$TOOLKIT_DIR/.editorconfig"
 
 if [ -f "$CANONICAL_EDITORCONFIG" ]; then
   cp "$CANONICAL_EDITORCONFIG" .editorconfig

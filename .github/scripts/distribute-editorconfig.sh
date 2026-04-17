@@ -18,7 +18,7 @@
 set -euo pipefail
 
 REPO_FILE="${1:?Usage: distribute-editorconfig.sh <repo-list-file>}"
-CANONICAL_ABS="$(pwd)/config/.editorconfig"
+CANONICAL_ABS="$(pwd)/.editorconfig"
 BRANCH="governance/update-editorconfig-$(date +%Y-%m-%d)"
 BRANCH_PREFIX="governance/update-editorconfig-"
 DRY_RUN="${DRY_RUN:-false}"
