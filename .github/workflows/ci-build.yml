@@ -117,7 +117,7 @@ jobs:
             exit $LASTEXITCODE
           }
 
-      # altConfigs.txt: one org/repo/ConfigName per line; built with dotnet build after the primary build
+      # altConfigs.txt: one org/repo/ConfigName per line; built with dotnet build after the primary build.
       # See .github/scripts/build-alt-configs.ps1 for full logic and rationale.
       # Hardcoded to the canonical DevOps_Toolkit repo so this works whether the calling repo
       # lives in the OSS org or a CSS org using the proxy pattern.
