@@ -107,7 +107,7 @@ jobs:
         id: runner
         uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/prepare-runner@main
         with:
-          runner_project: src/ComplianceRunner/ComplianceRunner.csproj
+          runner_project: tools/ComplianceRunner/src/ComplianceRunner/ComplianceRunner.csproj
           output_dir:     out\runner
           configuration:  ${{ inputs.configuration }}
           cache_prefix:   compliance-runner

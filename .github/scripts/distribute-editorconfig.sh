@@ -26,6 +26,7 @@ ORG="${ORG:?ORG must be set}"
 
 SKIPPED=0
 UPDATED=0
+DRY_RUN_COUNT=0
 FAILURES=()
 
 if [ ! -f "$CANONICAL_ABS" ]; then
@@ -69,6 +70,7 @@ while IFS= read -r repo; do
 
   if [ "$DRY_RUN" = "true" ]; then
     echo "::notice::[dry run] $repo would be updated."
+    DRY_RUN_COUNT=$((DRY_RUN_COUNT + 1))
     echo "::endgroup::"
     continue
   fi
@@ -137,9 +139,14 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     echo ""
     echo "| | Count |"
     echo "|---|---|"
-    echo "| Updated | $UPDATED |"
-    echo "| Already up to date | $SKIPPED |"
-    echo "| Failed | ${#FAILURES[@]} |"
+    if [ "$DRY_RUN" = "true" ]; then
+      echo "| Would be updated (dry run) | $DRY_RUN_COUNT |"
+      echo "| Already up to date | $SKIPPED |"
+    else
+      echo "| Updated | $UPDATED |"
+      echo "| Already up to date | $SKIPPED |"
+      echo "| Failed | ${#FAILURES[@]} |"
+    fi
 
     if [ "${#FAILURES[@]}" -gt 0 ]; then
       echo ""
@@ -156,4 +163,8 @@ if [ "${#FAILURES[@]}" -gt 0 ]; then
   exit 1
 fi
 
-echo "::notice::Distribution complete. Updated: $UPDATED  Skipped: $SKIPPED"
+if [ "$DRY_RUN" = "true" ]; then
+  echo "::notice::Distribution complete (dry run). Would update: $DRY_RUN_COUNT  Already up to date: $SKIPPED"
+else
+  echo "::notice::Distribution complete. Updated: $UPDATED  Skipped: $SKIPPED"
+fi
