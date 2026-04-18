@@ -269,9 +269,10 @@ jobs:
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
+          # repository = "org/repo" — merges the two fields to stay within the
+          # GitHub dispatch API limit of 10 top-level client_payload properties.
           PAYLOAD=$(jq -nc \
-            --arg repo        "${{ github.event.repository.name }}" \
-            --arg org         "${{ github.repository_owner }}" \
+            --arg repository  "${{ github.repository }}" \
             --arg sha         "${{ github.sha }}" \
             --arg ref         "${{ github.ref_name }}" \
             --arg run_id      "${{ github.run_id }}" \
@@ -286,7 +287,7 @@ jobs:
             --arg build       "$BUILD_RESULT" \
             --arg unit_tests  "$UNIT_TESTS_RESULT" \
             '{
-               repo: $repo, org: $org, sha: $sha, ref: $ref,
+               repository: $repository, sha: $sha, ref: $ref,
                run_id: $run_id, trigger: $trigger, timestamp: $timestamp,
                run_url: $run_url, maturity: $maturity, overall: $overall,
                jobs: {
