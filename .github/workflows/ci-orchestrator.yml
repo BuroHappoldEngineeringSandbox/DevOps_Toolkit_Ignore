@@ -10,10 +10,14 @@ on:
         required: false  # BHoMBot GitHub App ID — used to mint a short-lived token for cross-org dep cloning.
       BHOM_APP_PRIVATE_KEY:
         required: false  # BHoMBot GitHub App private key (PEM). Required when BHOM_APP_ID is set.
+      TEAMS_WEBHOOK_URL:
+        required: false  # Teams incoming webhook URL for post-merge failure notifications.
 
 # Under workflow_call, github.workflow is the caller's name; suffix avoids deadlock with caller.
+# event_name is included so PR runs and post-merge (push) runs on the same branch use
+# separate concurrency queues and do not cancel each other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-orchestrator
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-orchestrator
   cancel-in-progress: true
 
 jobs:
@@ -352,3 +356,83 @@ jobs:
           gh api -X POST \
             "repos/BuroHappoldEngineeringSandbox/CI_Health_Dashboard/dispatches" \
             --input -
+
+      # Notify the shared DevOps Teams channel on post-merge failures.
+      # Skipped on PR runs (those are expected to fail; only branch health matters)
+      # and when no webhook URL is configured.
+      - name: Notify Teams on post-merge failure
+        if: |
+          github.event_name != 'pull_request' &&
+          steps.payload.outputs.overall == 'failure'
+        shell: bash
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          OVERALL:           ${{ steps.payload.outputs.overall }}
+          RUN_URL:           ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FORMAT_RESULT:     ${{ needs.format.result }}
+          COMPLIANCE_RESULT: ${{ needs.compliance.result }}
+          DATASET_RESULT:    ${{ needs.dataset.result }}
+          BUILD_RESULT:      ${{ needs.build.result }}
+          UNIT_TESTS_RESULT: ${{ needs['unit-tests'].result }}
+        run: |
+          set -euo pipefail
+
+          # Skip gracefully when no webhook URL is configured (secret absent or empty).
+          if [ -z "${TEAMS_WEBHOOK_URL:-}" ]; then
+            echo "::notice::TEAMS_WEBHOOK_URL is not set — Teams notification skipped."
+            exit 0
+          fi
+
+          # Build a concise list of failed jobs for the message body.
+          FAILED_JOBS=""
+          declare -A JOB_RESULTS=(
+            [format]="$FORMAT_RESULT"
+            [compliance]="$COMPLIANCE_RESULT"
+            [dataset]="$DATASET_RESULT"
+            [build]="$BUILD_RESULT"
+            [unit-tests]="$UNIT_TESTS_RESULT"
+          )
+          for JOB in format compliance dataset build unit-tests; do
+            R="${JOB_RESULTS[$JOB]}"
+            case "$R" in failure|cancelled|error)
+              FAILED_JOBS="${FAILED_JOBS}\n- ${JOB} (${R})"
+              ;;
+            esac
+          done
+
+          REPO="${{ github.repository }}"
+          REF="${{ github.ref_name }}"
+          SHA="${{ github.sha }}"
+          SHORT_SHA="${SHA:0:7}"
+
+          jq -nc \
+            --arg repo        "$REPO" \
+            --arg ref         "$REF" \
+            --arg sha         "$SHORT_SHA" \
+            --arg run_url     "$RUN_URL" \
+            --arg failed_jobs "$FAILED_JOBS" \
+            '{
+               "@type": "MessageCard",
+               "@context": "https://schema.org/extensions",
+               "themeColor": "CF222E",
+               "summary": ("Post-merge CI failure: " + $repo + " (" + $ref + ")"),
+               "sections": [{
+                 "activityTitle": ("\ud83d\udea8 Post-merge CI failure"),
+                 "activitySubtitle": ($repo + " · " + $ref + " · " + $sha),
+                 "facts": [
+                   {"name": "Repository", "value": $repo},
+                   {"name": "Branch",     "value": $ref},
+                   {"name": "Commit",     "value": $sha},
+                   {"name": "Failed jobs","value": $failed_jobs}
+                 ],
+                 "markdown": true
+               }],
+               "potentialAction": [{
+                 "@type": "OpenUri",
+                 "name": "View run",
+                 "targets": [{"os": "default", "uri": $run_url}]
+               }]
+             }' | \
+          curl -s -X POST -H "Content-Type: application/json" \
+            --data @- \
+            "$TEAMS_WEBHOOK_URL"
