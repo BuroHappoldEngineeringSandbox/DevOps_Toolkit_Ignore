@@ -273,14 +273,42 @@ jobs:
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
+          # Compute the destination branch — the branch this CI result contributes health data to.
+          # For pull_request events github.base_ref is the merge target; for push it is empty.
+          BASE_REF="${{ github.base_ref }}"
+          HEAD_REF="${{ github.ref_name }}"
+          DEST_REF="${BASE_REF:-$HEAD_REF}"
+
+          # Compute a semantic routing trigger that the dashboard ingest uses to decide
+          # whether to write branch-authoritative state or PR-fallback state.
+          # PRs targeting develop/main are treated as branch truth (they run against
+          # the synthetic merge commit, which is what would land on the branch).
+          # This avoids the need for a per-repo on:push caller workflow in every toolkit.
+          EVENT="${{ github.event_name }}"
+          case "$EVENT" in
+            push|workflow_dispatch)
+              ROUTING_TRIGGER="push"
+              ;;
+            pull_request|pull_request_target)
+              if [[ "$BASE_REF" == "develop" || "$BASE_REF" == "main" ]]; then
+                ROUTING_TRIGGER="pr-to-branch"
+              else
+                ROUTING_TRIGGER="pull_request"
+              fi
+              ;;
+            *)
+              ROUTING_TRIGGER="$EVENT"
+              ;;
+          esac
+
           # repository = "org/repo" — merges the two fields to stay within the
           # GitHub dispatch API limit of 10 top-level client_payload properties.
           PAYLOAD=$(jq -nc \
             --arg repository  "${{ github.repository }}" \
             --arg sha         "${{ github.sha }}" \
-            --arg ref         "${{ github.ref_name }}" \
+            --arg ref         "$DEST_REF" \
             --arg run_id      "${{ github.run_id }}" \
-            --arg trigger     "${{ github.event_name }}" \
+            --arg trigger     "$ROUTING_TRIGGER" \
             --arg timestamp   "$TIMESTAMP" \
             --arg run_url     "$RUN_URL" \
             --arg maturity    "$MATURITY" \
@@ -301,14 +329,15 @@ jobs:
                }
              }')
 
-          echo "json=$PAYLOAD"    >> "$GITHUB_OUTPUT"
-          echo "overall=$OVERALL" >> "$GITHUB_OUTPUT"
+          echo "json=$PAYLOAD"          >> "$GITHUB_OUTPUT"
+          echo "overall=$OVERALL"        >> "$GITHUB_OUTPUT"
+          echo "trigger=$ROUTING_TRIGGER" >> "$GITHUB_OUTPUT"
 
       # Create a GitHub Deployment status on the calling repo so branch health is visible
-      # natively in the GitHub UI (Environments tab). PR runs are excluded — the volume
-      # of ephemeral PR environments would pollute the list.
+      # natively in the GitHub UI (Environments tab). Ephemeral PRs (those not targeting
+      # develop/main) are excluded to avoid polluting the Environments list.
       - name: Create deployment status (post-merge only)
-        if: github.event_name != 'pull_request'
+        if: steps.payload.outputs.trigger != 'pull_request' && steps.payload.outputs.trigger != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -362,7 +391,8 @@ jobs:
       # and when no webhook URL is configured.
       - name: Notify Teams on post-merge failure
         if: |
-          github.event_name != 'pull_request' &&
+          steps.payload.outputs.trigger != 'pull_request' &&
+          steps.payload.outputs.trigger != '' &&
           steps.payload.outputs.overall == 'failure'
         shell: bash
         env:
