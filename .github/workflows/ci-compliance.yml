@@ -94,7 +94,7 @@ jobs:
 
       - name: Resolve dependencies (Test_Toolkit graph)
         if: steps.changed.outputs.count != '0'
-        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main  # MIGRATE-TO-PROD: update org when moving to production
         with:
           mode:           seeds
           seeds:          BHoM/Test_Toolkit
@@ -105,7 +105,7 @@ jobs:
       - name: Prepare ComplianceRunner
         if: steps.changed.outputs.count != '0'
         id: runner
-        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/prepare-runner@main
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/prepare-runner@main  # MIGRATE-TO-PROD: update org when moving to production
         with:
           runner_project: tools/ComplianceRunner/src/ComplianceRunner/ComplianceRunner.csproj
           output_dir:     out\runner

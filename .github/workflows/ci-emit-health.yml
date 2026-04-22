@@ -192,7 +192,7 @@ jobs:
           jq -nc --argjson payload "$PAYLOAD" \
             '{"event_type":"ci-health-run","client_payload":$payload}' | \
           gh api -X POST \
-            "repos/BuroHappoldEngineeringSandbox/CI_Health_Dashboard/dispatches" \
+            "repos/${{ github.repository_owner }}/CI_Health_Dashboard/dispatches" \
             --input -
 
       # Notify the shared DevOps Teams channel on post-merge failures.

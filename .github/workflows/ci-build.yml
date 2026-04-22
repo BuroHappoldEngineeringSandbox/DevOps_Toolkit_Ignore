@@ -61,7 +61,7 @@ jobs:
           owner: ${{ github.repository_owner }}
 
       - name: Resolve dependencies
-        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main
+        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main  # MIGRATE-TO-PROD: update org when moving to production
         with:
           mode: caller
           dotnet_version: ${{ inputs.dotnet_version }}
@@ -125,7 +125,7 @@ jobs:
         if: hashFiles('altConfigs.txt') != ''
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          repository: BuroHappoldEngineeringSandbox/DevOps_Toolkit
+          repository: ${{ github.repository_owner }}/DevOps_Toolkit
           ref: main
           path: _toolkit
           token: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
