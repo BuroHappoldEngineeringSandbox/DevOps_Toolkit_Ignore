@@ -28,8 +28,6 @@ jobs:
       contents: read
     outputs:
       state:                    ${{ steps.state.outputs.state }}
-      dotnet_version:           ${{ steps.config.outputs.dotnet_version }}
-      configuration:            ${{ steps.config.outputs.configuration }}
       run_format:               ${{ steps.policy.outputs.run_format }}
       run_compliance:           ${{ steps.policy.outputs.run_compliance }}
       compliance_checks:        ${{ steps.policy.outputs.compliance_checks }}
@@ -150,9 +148,6 @@ jobs:
           STATE: ${{ steps.state.outputs.state }}
         run: bash _central/.github/scripts/orchestrator/read-policy.sh
 
-      - name: Read pipeline config
-        id: config
-        run: bash _central/.github/scripts/orchestrator/pipeline-defaults.sh
 
   # ── Jobs ────────────────────────────────────────────────────────────────────
 
@@ -164,7 +159,7 @@ jobs:
       needs.setup.outputs.format_files_changed == 'true'
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-format.yml@main
     with:
-      dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
+      dotnet_version: "8.0"
     secrets: inherit
 
   compliance:
@@ -175,8 +170,8 @@ jobs:
       needs.setup.outputs.compliance_files_changed == 'true'
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-compliance.yml@main
     with:
-      dotnet_version:    ${{ needs.setup.outputs.dotnet_version }}
-      configuration:     ${{ needs.setup.outputs.configuration }}
+      dotnet_version:    "8.0"
+      configuration:     "Release"
       compliance_checks: ${{ needs.setup.outputs.compliance_checks }}
     secrets: inherit
 
@@ -188,8 +183,8 @@ jobs:
       needs.setup.outputs.dataset_files_changed == 'true'
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-dataset.yml@main
     with:
-      dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
-      configuration:  ${{ needs.setup.outputs.configuration }}
+      dotnet_version: "8.0"
+      configuration:  "Release"
     secrets: inherit
 
   build:
@@ -199,8 +194,8 @@ jobs:
       needs.setup.outputs.run_build == 'true'
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-build.yml@main
     with:
-      dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
-      configuration:  ${{ needs.setup.outputs.configuration }}
+      dotnet_version: "8.0"
+      configuration:  "Release"
     secrets: inherit
 
   # Unit-tests resolves its own deps and builds the test solution independently of ci-build.
@@ -211,258 +206,23 @@ jobs:
       needs.setup.outputs.run_unit_tests == 'true'
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-unit-tests.yml@main
     with:
-      dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
-      configuration:  ${{ needs.setup.outputs.configuration }}
+      dotnet_version: "8.0"
+      configuration:  "Release"
     secrets: inherit
 
   # ── Health emission ─────────────────────────────────────────────────────────
   # Runs unconditionally after all child jobs (including failures and skips).
-  # Writes a GitHub Deployment status on the calling repo (post-merge only)
-  # and dispatches a structured run record to CI_Health_Dashboard for aggregation.
-  # Failure of this job does not affect required status checks — it is observational.
+  # Delegates to ci-emit-health.yml; continue-on-error ensures a telemetry failure
+  # never blocks required status checks.
   emit-health:
     needs: [setup, format, compliance, dataset, build, unit-tests]
     if: always() && needs.setup.result != 'skipped'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      deployments: write  # required for GitHub Deployment status on the calling repo only
-
-    steps:
-      - name: Check App credentials
-        id: app-check
-        shell: bash
-        env:
-          APP_ID: ${{ secrets.BHOM_APP_ID }}
-        run: |
-          if [ -n "$APP_ID" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Generate dashboard token
-        id: dash-token
-        if: steps.app-check.outputs.available == 'true'
-        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
-        with:
-          app-id: ${{ secrets.BHOM_APP_ID }}
-          private-key: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-
-      - name: Build health payload
-        id: payload
-        shell: bash
-        env:
-          FORMAT_RESULT:     ${{ needs.format.result }}
-          COMPLIANCE_RESULT: ${{ needs.compliance.result }}
-          DATASET_RESULT:    ${{ needs.dataset.result }}
-          BUILD_RESULT:      ${{ needs.build.result }}
-          UNIT_TESTS_RESULT: ${{ needs['unit-tests'].result }}
-          MATURITY:          ${{ needs.setup.outputs.state }}
-        run: |
-          set -euo pipefail
-
-          # Determine overall: any failure or cancellation wins over success; skipped is neutral.
-          OVERALL="success"
-          for r in "$FORMAT_RESULT" "$COMPLIANCE_RESULT" "$DATASET_RESULT" "$BUILD_RESULT" "$UNIT_TESTS_RESULT"; do
-            case "$r" in failure|cancelled|error) OVERALL="failure"; break ;; esac
-          done
-
-          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          # Compute the destination branch — the branch this CI result contributes health data to.
-          # For pull_request events github.base_ref is the merge target; for push it is empty.
-          BASE_REF="${{ github.base_ref }}"
-          HEAD_REF="${{ github.ref_name }}"
-          DEST_REF="${BASE_REF:-$HEAD_REF}"
-
-          # Compute a semantic routing trigger that the dashboard ingest uses to decide
-          # whether to write branch-authoritative state or PR-fallback state.
-          # PRs targeting develop/main are treated as branch truth (they run against
-          # the synthetic merge commit, which is what would land on the branch).
-          # This avoids the need for a per-repo on:push caller workflow in every toolkit.
-          EVENT="${{ github.event_name }}"
-          case "$EVENT" in
-            push|workflow_dispatch)
-              ROUTING_TRIGGER="push"
-              ;;
-            pull_request|pull_request_target)
-              if [[ "$BASE_REF" == "develop" || "$BASE_REF" == "main" ]]; then
-                ROUTING_TRIGGER="pr-to-branch"
-              else
-                ROUTING_TRIGGER="pull_request"
-              fi
-              ;;
-            *)
-              ROUTING_TRIGGER="$EVENT"
-              ;;
-          esac
-
-          # repository = "org/repo" — merges the two fields to stay within the
-          # GitHub dispatch API limit of 10 top-level client_payload properties.
-          PAYLOAD=$(jq -nc \
-            --arg repository  "${{ github.repository }}" \
-            --arg sha         "${{ github.sha }}" \
-            --arg ref         "$DEST_REF" \
-            --arg run_id      "${{ github.run_id }}" \
-            --arg trigger     "$ROUTING_TRIGGER" \
-            --arg timestamp   "$TIMESTAMP" \
-            --arg run_url     "$RUN_URL" \
-            --arg maturity    "$MATURITY" \
-            --arg overall     "$OVERALL" \
-            --arg format      "$FORMAT_RESULT" \
-            --arg compliance  "$COMPLIANCE_RESULT" \
-            --arg dataset     "$DATASET_RESULT" \
-            --arg build       "$BUILD_RESULT" \
-            --arg unit_tests  "$UNIT_TESTS_RESULT" \
-            '{
-               repository: $repository, sha: $sha, ref: $ref,
-               run_id: $run_id, trigger: $trigger, timestamp: $timestamp,
-               run_url: $run_url, maturity: $maturity, overall: $overall,
-               jobs: {
-                 format: $format, compliance: $compliance,
-                 dataset: $dataset, build: $build,
-                 "unit-tests": $unit_tests
-               }
-             }')
-
-          echo "json=$PAYLOAD"          >> "$GITHUB_OUTPUT"
-          echo "overall=$OVERALL"        >> "$GITHUB_OUTPUT"
-          echo "trigger=$ROUTING_TRIGGER" >> "$GITHUB_OUTPUT"
-
-      # Create a GitHub Deployment status on the calling repo so branch health is visible
-      # natively in the GitHub UI (Environments tab). Ephemeral PRs (those not targeting
-      # develop/main) are excluded to avoid polluting the Environments list.
-      - name: Create deployment status (post-merge only)
-        if: steps.payload.outputs.trigger != 'pull_request' && steps.payload.outputs.trigger != ''
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OVERALL:  ${{ steps.payload.outputs.overall }}
-        run: |
-          set -euo pipefail
-
-          case "$OVERALL" in
-            success) STATE="success" ;;
-            *)       STATE="failure" ;;
-          esac
-
-          DEPLOY_BODY=$(jq -nc \
-            --arg ref         "${{ github.sha }}" \
-            --arg environment "${{ github.ref_name }}" \
-            '{ref: $ref, environment: $environment, auto_merge: false, required_contexts: []}')
-
-          DEPLOY_ID=$(echo "$DEPLOY_BODY" | \
-            gh api -X POST "repos/${{ github.repository }}/deployments" --input - --jq '.id' \
-            2>/dev/null || echo "")
-
-          if [ -z "$DEPLOY_ID" ]; then
-            echo "::warning::Deployment creation returned no ID — status skipped."
-            exit 0
-          fi
-
-          gh api -X POST \
-            "repos/${{ github.repository }}/deployments/${DEPLOY_ID}/statuses" \
-            -f state="$STATE" \
-            -f environment_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-      # Dispatch the run record to CI_Health_Dashboard for aggregation and trend tracking.
-      # Skipped gracefully when App credentials are absent (prototype repos, forks).
-      - name: Dispatch to dashboard
-        if: steps.app-check.outputs.available == 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.dash-token.outputs.token }}
-          PAYLOAD:  ${{ steps.payload.outputs.json }}
-        run: |
-          set -euo pipefail
-
-          jq -nc --argjson payload "$PAYLOAD" \
-            '{"event_type":"ci-health-run","client_payload":$payload}' | \
-          gh api -X POST \
-            "repos/BuroHappoldEngineeringSandbox/CI_Health_Dashboard/dispatches" \
-            --input -
-
-      # Notify the shared DevOps Teams channel on post-merge failures.
-      # Skipped on PR runs (those are expected to fail; only branch health matters)
-      # and when no webhook URL is configured.
-      - name: Notify Teams on post-merge failure
-        if: |
-          steps.payload.outputs.trigger != 'pull_request' &&
-          steps.payload.outputs.trigger != '' &&
-          steps.payload.outputs.overall == 'failure'
-        shell: bash
-        env:
-          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
-          OVERALL:           ${{ steps.payload.outputs.overall }}
-          RUN_URL:           ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          FORMAT_RESULT:     ${{ needs.format.result }}
-          COMPLIANCE_RESULT: ${{ needs.compliance.result }}
-          DATASET_RESULT:    ${{ needs.dataset.result }}
-          BUILD_RESULT:      ${{ needs.build.result }}
-          UNIT_TESTS_RESULT: ${{ needs['unit-tests'].result }}
-        run: |
-          set -euo pipefail
-
-          # Skip gracefully when no webhook URL is configured (secret absent or empty).
-          if [ -z "${TEAMS_WEBHOOK_URL:-}" ]; then
-            echo "::notice::TEAMS_WEBHOOK_URL is not set — Teams notification skipped."
-            exit 0
-          fi
-
-          # Build a concise list of failed jobs for the message body.
-          FAILED_JOBS=""
-          declare -A JOB_RESULTS=(
-            [format]="$FORMAT_RESULT"
-            [compliance]="$COMPLIANCE_RESULT"
-            [dataset]="$DATASET_RESULT"
-            [build]="$BUILD_RESULT"
-            [unit-tests]="$UNIT_TESTS_RESULT"
-          )
-          for JOB in format compliance dataset build unit-tests; do
-            R="${JOB_RESULTS[$JOB]}"
-            case "$R" in failure|cancelled|error)
-              FAILED_JOBS="${FAILED_JOBS}\n- ${JOB} (${R})"
-              ;;
-            esac
-          done
-
-          REPO="${{ github.repository }}"
-          REF="${{ github.ref_name }}"
-          SHA="${{ github.sha }}"
-          SHORT_SHA="${SHA:0:7}"
-
-          jq -nc \
-            --arg repo        "$REPO" \
-            --arg ref         "$REF" \
-            --arg sha         "$SHORT_SHA" \
-            --arg run_url     "$RUN_URL" \
-            --arg failed_jobs "$FAILED_JOBS" \
-            '{
-               "@type": "MessageCard",
-               "@context": "https://schema.org/extensions",
-               "themeColor": "CF222E",
-               "summary": ("Post-merge CI failure: " + $repo + " (" + $ref + ")"),
-               "sections": [{
-                 "activityTitle": ("\ud83d\udea8 Post-merge CI failure"),
-                 "activitySubtitle": ($repo + " · " + $ref + " · " + $sha),
-                 "facts": [
-                   {"name": "Repository", "value": $repo},
-                   {"name": "Branch",     "value": $ref},
-                   {"name": "Commit",     "value": $sha},
-                   {"name": "Failed jobs","value": $failed_jobs}
-                 ],
-                 "markdown": true
-               }],
-               "potentialAction": [{
-                 "@type": "OpenUri",
-                 "name": "View run",
-                 "targets": [{"os": "default", "uri": $run_url}]
-               }]
-             }' | \
-          curl -s -X POST -H "Content-Type: application/json" \
-            --data @- \
-            "$TEAMS_WEBHOOK_URL"
+    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-emit-health.yml@main
+    with:
+      maturity:          ${{ needs.setup.outputs.state }}
+      format_result:     ${{ needs.format.result }}
+      compliance_result: ${{ needs.compliance.result }}
+      dataset_result:    ${{ needs.dataset.result }}
+      build_result:      ${{ needs.build.result }}
+      unit_tests_result: ${{ needs['unit-tests'].result }}
+    secrets: inherit
