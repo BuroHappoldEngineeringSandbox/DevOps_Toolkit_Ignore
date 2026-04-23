@@ -21,8 +21,7 @@ function Invoke-BHoMBuild {
         throw "packages.config detected in $targetDir — legacy NuGet/MSBuild is not supported. Migrate all projects to SDK-style."
     }
 
-    # Push into the repo directory before invoking dotnet.
-    # Keeps relative path resolution consistent.
+    # Push into the repo directory for consistent relative path resolution.
     Push-Location $targetDir
     try {
         dotnet restore $Target
@@ -47,8 +46,7 @@ if (-not (Test-Path $orderOut)) {
     $order = @()
 }
 else {
-    # _order.txt contains owner/repo lines; derive repo name and path from each.
-    # Filter blank lines that result when the file was written empty (no dependencies).
+    # Filter blank lines: _order.txt may be written empty when there are no dependencies.
     $order = @(Get-Content $orderOut | Where-Object { $_ -match '\S' })
 }
 
@@ -62,7 +60,11 @@ foreach ($ownerRepo in $order) {
     $repoName = $ownerRepo.Split("/")[-1]
     $repoPath = Join-Path $cloneRoot $repoName
     if (-not (Test-Path $repoPath)) {
-        Write-Host "::warning::Clone not found at $repoPath — skipping $ownerRepo"
+        # Hard-fail on missing clone: resolution recorded this repo but the clone failed
+        # (auth/network error). Continuing would yield a confusing "assembly not found" later.
+        Write-Host "::error title=Build::Clone not found at $repoPath — $ownerRepo was in the build order but was never cloned. Check for earlier auth or network errors in the dependency resolution step."
+        $overallFailures += "$repoName"
+        Write-Host "::endgroup::"
         continue
     }
 
@@ -105,9 +107,8 @@ foreach ($ownerRepo in $order) {
     Write-Host "::endgroup::"
 }
 
-# Assemblies are staged to C:\ProgramData\BHoM\Assemblies by each repo's
-# own PostBuildEvent (xcopy). No collection step needed — that directory
-# is the canonical output and is cached directly by the action.
+# Assemblies are staged to ProgramData\BHoM\Assemblies by each repo's PostBuildEvent.
+# That directory is the canonical output cached by the calling action.
 $bhomAssemblies = Join-Path $env:ProgramData "BHoM\Assemblies"
 $totalAssemblies = @(Get-ChildItem $bhomAssemblies -Filter *.dll -ErrorAction SilentlyContinue).Count
 Write-Host "Total assemblies in ${bhomAssemblies}: $totalAssemblies"

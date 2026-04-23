@@ -6,7 +6,6 @@ on:
       dotnet_version:
         type: string
         required: true
-        # SDK-style: dotnet CLI. Legacy Framework: MSBuild + NuGet from resolve-dependencies.
       configuration:
         type: string
         required: true
@@ -117,10 +116,8 @@ jobs:
             exit $LASTEXITCODE
           }
 
-      # altConfigs.txt: one org/repo/ConfigName per line; built with dotnet build after the primary build.
-      # See .github/scripts/build-alt-configs.ps1 for full logic and rationale.
-      # Hardcoded to the canonical DevOps_Toolkit repo so this works whether the calling repo
-      # lives in the OSS org or a CSS org using the proxy pattern.
+      # altConfigs.txt: one org/repo/ConfigName per line. Build scripts are sourced from
+      # this DevOps_Toolkit checkout — the caller repo need not contain them.
       - name: Checkout DevOps_Toolkit (build scripts)
         if: hashFiles('altConfigs.txt') != ''
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

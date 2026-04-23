@@ -52,9 +52,8 @@ runs:
       with:
         dotnet-version: ${{ inputs.dotnet_version }}
 
-    # github.action_sha is the DevOps_Toolkit commit SHA — available in composite contexts
-    # without a git clone or API call. Keying the cache on this SHA ensures a new binary
-    # is published whenever the action's source changes.
+    # github.action_sha is the DevOps_Toolkit SHA in composite contexts (no clone needed).
+    # Cache keyed on this SHA; any source change triggers a cache miss and fresh publish.
     - name: Get DevOps_Toolkit HEAD SHA
       id: sha
       shell: pwsh

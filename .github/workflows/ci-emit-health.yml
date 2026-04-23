@@ -26,8 +26,6 @@ on:
         required: false  # BHoMBot GitHub App ID — used to mint a short-lived token for the dashboard dispatch.
       BHOM_APP_PRIVATE_KEY:
         required: false  # BHoMBot GitHub App private key (PEM). Required when BHOM_APP_ID is set.
-      TEAMS_WEBHOOK_URL:
-        required: false  # Teams incoming webhook URL for post-merge failure notifications.
 
 jobs:
   emit-health:
@@ -54,6 +52,7 @@ jobs:
       - name: Generate dashboard token
         id: dash-token
         if: steps.app-check.outputs.available == 'true'
+        continue-on-error: true  # bad key/App ID must not kill Build health payload or Create deployment status
         uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         with:
           app-id: ${{ secrets.BHOM_APP_ID }}
@@ -147,6 +146,7 @@ jobs:
       # develop/main) are excluded to avoid polluting the Environments list.
       - name: Create deployment status (post-merge only)
         if: steps.payload.outputs.trigger != 'pull_request' && steps.payload.outputs.trigger != ''
+        continue-on-error: true  # deployment API is optional telemetry; failure must not surface as CI error
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -179,9 +179,10 @@ jobs:
             -f environment_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       # Dispatch the run record to CI_Health_Dashboard for aggregation and trend tracking.
-      # Skipped gracefully when App credentials are absent (prototype repos, forks).
+      # Skipped gracefully when App credentials are absent or token generation failed (prototype repos, forks).
       - name: Dispatch to dashboard
-        if: steps.app-check.outputs.available == 'true'
+        if: steps.dash-token.outcome == 'success' && steps.payload.outputs.json != ''
+        continue-on-error: true  # external repo availability is outside our control
         shell: bash
         env:
           GH_TOKEN: ${{ steps.dash-token.outputs.token }}
@@ -195,83 +196,4 @@ jobs:
             "repos/${{ github.repository_owner }}/CI_Health_Dashboard/dispatches" \
             --input -
 
-      # Notify the shared DevOps Teams channel on post-merge failures.
-      # Skipped on PR runs (those are expected to fail; only branch health matters)
-      # and when no webhook URL is configured.
-      - name: Notify Teams on post-merge failure
-        if: |
-          steps.payload.outputs.trigger != 'pull_request' &&
-          steps.payload.outputs.trigger != '' &&
-          steps.payload.outputs.overall == 'failure'
-        shell: bash
-        env:
-          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
-          OVERALL:           ${{ steps.payload.outputs.overall }}
-          RUN_URL:           ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          FORMAT_RESULT:     ${{ inputs.format_result }}
-          COMPLIANCE_RESULT: ${{ inputs.compliance_result }}
-          DATASET_RESULT:    ${{ inputs.dataset_result }}
-          BUILD_RESULT:      ${{ inputs.build_result }}
-          UNIT_TESTS_RESULT: ${{ inputs.unit_tests_result }}
-        run: |
-          set -euo pipefail
 
-          # Skip gracefully when no webhook URL is configured (secret absent or empty).
-          if [ -z "${TEAMS_WEBHOOK_URL:-}" ]; then
-            echo "::notice::TEAMS_WEBHOOK_URL is not set — Teams notification skipped."
-            exit 0
-          fi
-
-          # Build a concise list of failed jobs for the message body.
-          FAILED_JOBS=""
-          declare -A JOB_RESULTS=(
-            [format]="$FORMAT_RESULT"
-            [compliance]="$COMPLIANCE_RESULT"
-            [dataset]="$DATASET_RESULT"
-            [build]="$BUILD_RESULT"
-            [unit-tests]="$UNIT_TESTS_RESULT"
-          )
-          for JOB in format compliance dataset build unit-tests; do
-            R="${JOB_RESULTS[$JOB]}"
-            case "$R" in failure|cancelled|error)
-              FAILED_JOBS="${FAILED_JOBS}\n- ${JOB} (${R})"
-              ;;
-            esac
-          done
-
-          REPO="${{ github.repository }}"
-          REF="${{ github.ref_name }}"
-          SHA="${{ github.sha }}"
-          SHORT_SHA="${SHA:0:7}"
-
-          jq -nc \
-            --arg repo        "$REPO" \
-            --arg ref         "$REF" \
-            --arg sha         "$SHORT_SHA" \
-            --arg run_url     "$RUN_URL" \
-            --arg failed_jobs "$FAILED_JOBS" \
-            '{
-               "@type": "MessageCard",
-               "@context": "https://schema.org/extensions",
-               "themeColor": "CF222E",
-               "summary": ("Post-merge CI failure: " + $repo + " (" + $ref + ")"),
-               "sections": [{
-                 "activityTitle": ("\ud83d\udea8 Post-merge CI failure"),
-                 "activitySubtitle": ($repo + " · " + $ref + " · " + $sha),
-                 "facts": [
-                   {"name": "Repository", "value": $repo},
-                   {"name": "Branch",     "value": $ref},
-                   {"name": "Commit",     "value": $sha},
-                   {"name": "Failed jobs","value": $failed_jobs}
-                 ],
-                 "markdown": true
-               }],
-               "potentialAction": [{
-                 "@type": "OpenUri",
-                 "name": "View run",
-                 "targets": [{"os": "default", "uri": $run_url}]
-               }]
-             }' | \
-          curl -s -X POST -H "Content-Type: application/json" \
-            --data @- \
-            "$TEAMS_WEBHOOK_URL"

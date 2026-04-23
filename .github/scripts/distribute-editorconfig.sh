@@ -168,3 +168,7 @@ if [ "$DRY_RUN" = "true" ]; then
 else
   echo "::notice::Distribution complete. Updated: $UPDATED  Skipped: $SKIPPED"
 fi
+
+# Clean up cloned repo directories. On GitHub-hosted runners this is redundant (ephemeral
+# workspace), but prevents disk accumulation across runs on self-hosted runners.
+rm -rf targets/

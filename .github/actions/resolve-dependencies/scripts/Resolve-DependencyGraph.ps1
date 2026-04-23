@@ -20,8 +20,7 @@ New-Item -ItemType Directory -Force -Path $cloneRoot | Out-Null
 
 if (Test-Path $selectFile) { Remove-Item $selectFile -Force }
 
-# Reads non-blank, non-comment lines from a file and validates format.
-# Valid forms: owner/repo or owner/repo@branch|tag|sha (no whitespace).
+# Parses owner/repo or owner/repo@ref lines; rejects blank, comment, and malformed entries.
 function Lines([string]$path) {
     if (Test-Path $path) {
         return Get-Content $path |
@@ -53,9 +52,8 @@ function Parse-RepoSpec([string]$spec) {
     return @{ Key=$spec; Ref=$ref }
 }
 
-# Branch preference: explicit @ref → PR_BRANCH → BASE_BRANCH → remote default
-# $Prefer is null when PR_BRANCH is unset (push/dispatch events) so the ls-remote
-# round-trip is skipped entirely rather than probing a sentinel that never exists.
+# Resolution order: explicit @ref → PR head branch → base branch → develop → remote default.
+# $Prefer is null on push/dispatch events, skipping the ls-remote probe.
 $Prefer   = if ([string]::IsNullOrWhiteSpace($env:PR_BRANCH))   { $null } else { $env:PR_BRANCH.Trim() }
 $Fallback = if ([string]::IsNullOrWhiteSpace($env:BASE_BRANCH)) { 'develop' } else { $env:BASE_BRANCH.Trim() }
 
@@ -64,12 +62,13 @@ $visited = New-Object System.Collections.Generic.HashSet[string]  # guards again
 $nameMap = @{}  # owner/repo -> folder
 $pathMap = @{}  # owner/repo -> path
 
-# Route all GitHub HTTPS clones through the token via insteadOf so the token never appears
-# in git command arguments, process listings, or git's own error messages.
-# DEP_TOKEN is masked in Actions logs; writing it into a URL rewrite rule instead of a clone
-# URL also means cloned repos' .git/config files never contain the credential.
+# Use insteadOf to inject the token at the git config level — keeps it out of command
+# arguments, process listings, and cloned repos' .git/config. Removed at end of script
+# to avoid persisting the credential on self-hosted runners between jobs.
+$tokenInsteadOfKey = $null
 if (-not [string]::IsNullOrWhiteSpace($env:DEP_TOKEN)) {
-    git config --global url."https://x-access-token:$($env:DEP_TOKEN)@github.com/".insteadOf "https://github.com/"
+    $tokenInsteadOfKey = "url.https://x-access-token:$($env:DEP_TOKEN)@github.com/.insteadOf"
+    git config --global $tokenInsteadOfKey "https://github.com/"
 }
 
 function Get-FolderName([string]$ownerRepo) {
@@ -121,8 +120,7 @@ function Clone-And-Checkout([string]$ownerRepo, [string]$ref) {
                     if ($LASTEXITCODE -ne 0) { throw "git checkout FETCH_HEAD failed for '$ownerRepo' (ref=$Fallback)" }
                     $selectedRef = $Fallback
                 } else {
-                    # Neither PR branch nor base branch exist on this dep repo — fall back to
-                    # its remote default branch (main / next / etc.)
+                    # Neither PR nor base branch exists on this dep; fall back to remote default.
                     git fetch origin HEAD --depth 1 | Out-Null
                     git checkout -q FETCH_HEAD
                     if ($LASTEXITCODE -ne 0) { throw "git checkout FETCH_HEAD failed for '$ownerRepo' (remote default)" }
@@ -161,8 +159,7 @@ function Build-Chain([string]$ownerRepo, [bool]$includeSelf=$false, [string]$ref
         Clone-And-Checkout $ownerRepo $ref | Out-Null
     }
 
-    # Guard against circular dependencies: if this repo's transitive graph has already
-    # been expanded in an ancestor call, skip re-expansion to prevent infinite recursion.
+    # Already visited: skip re-expansion to prevent infinite recursion on circular deps.
     if ($visited.Contains($ownerRepo)) {
         if ($includeSelf -and $pathMap.ContainsKey($ownerRepo)) {
             $chain.Add(@{ Key=$ownerRepo; Name=$nameMap[$ownerRepo]; Path=$pathMap[$ownerRepo] }) | Out-Null
@@ -232,8 +229,7 @@ else {
     }
 }
 
-# Additional seeds (caller mode only): appended after caller graph so caller assemblies
-# build first. Ignored when mode=seeds since that mode already accepts multiple repos.
+# Additional seeds (caller mode only): appended after the caller graph so caller assemblies build first.
 if ($Mode -ne "seeds" -and -not [string]::IsNullOrWhiteSpace($AdditionalSeeds)) {
     Write-Host "----- Additional seeds (appended to caller graph) -----"
 
@@ -264,8 +260,7 @@ foreach ($k in $phaseList) {
     }
 }
 
-# Write _order.txt — Build-Dependencies derives clone path from repo name.
-# Always create the file (even when empty) so Build-Dependencies.ps1's Get-Content never throws.
+# Always write _order.txt even when empty — Build-Dependencies.ps1 relies on it existing.
 if ($merged.Count -gt 0) {
     $merged | Set-Content -Path $orderOut -Encoding utf8
 } else {
@@ -299,4 +294,11 @@ if (Test-Path $selectFile) {
     if ($env:GITHUB_STEP_SUMMARY) {
         $mdLines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
     }
+}
+
+# Remove the credential rewrite — on self-hosted runners ~/.gitconfig persists between
+# jobs and would leak the short-lived token to subsequent jobs.
+if ($null -ne $tokenInsteadOfKey) {
+    git config --global --unset $tokenInsteadOfKey 2>$null
+    Write-Host "::debug::Removed git credential rewrite from global config."
 }

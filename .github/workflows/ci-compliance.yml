@@ -42,7 +42,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      # PR diff vs base SHA (two-dot); shallow fetch avoids merge-base issues on fetch-depth:1.
+      # Shallow fetch of base SHA avoids merge-base issues with fetch-depth:1.
       - name: Compute changed files
         id: changed
         run: |

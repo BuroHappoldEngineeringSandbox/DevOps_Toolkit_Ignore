@@ -67,8 +67,7 @@ runs:
         path: |
           ~/.nuget/packages
           ~\AppData\Local\Microsoft\MSBuild\Cache
-        # dotnet_version intentionally excluded: NuGet package binaries are SDK-version-agnostic
-        # for the net8.0 targets used by BHoM repos.
+        # dotnet_version excluded: NuGet binaries are SDK-version-agnostic for net8.0 targets.
         key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj','**/global.json','**/nuget.config') }}
         restore-keys: ${{ runner.os }}-nuget-
 
@@ -81,14 +80,11 @@ runs:
         if (Test-Path deps/_order.txt)     { Remove-Item deps/_order.txt -Force }
         if (Test-Path deps/_selection.txt) { Remove-Item deps/_selection.txt -Force }
 
-        # C:\bhom-deps\ — isolated clone root, sits at the drive root so no caller
-        # repo Directory.Build.props exists above it. Each dependency repo builds
-        # with only its own MSBuild configuration.
+        # C:\bhom-deps\ — at the drive root so no caller Directory.Build.props propagates into dep builds.
         New-Item -ItemType Directory -Force -Path "C:\bhom-deps" | Out-Null
 
-        # Pin the dotnet SDK for all builds under C:\bhom-deps\. setup-dotnet installs
-        # a SDK but dotnet selects the highest installed version at invocation time
-        # unless a global.json is present. rollForward latestMinor accepts any patch.
+        # Pin SDK version via global.json: without it dotnet selects the highest installed.
+        # rollForward: latestMinor accepts any patch of the specified minor version.
         $sdkVersion = "${{ inputs.dotnet_version }}"
         if ($sdkVersion -match '^\d+\.\d+$') { $sdkVersion = "$sdkVersion.0" }
         [ordered]@{ sdk = [ordered]@{ version = $sdkVersion; rollForward = "latestMinor" } } `
@@ -130,9 +126,8 @@ runs:
 
         "keypart=$keypart" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-    # cache-hit is true only on an exact key match. A restore-key (prefix) match
-    # restores a stale cache but leaves cache-hit false, triggering a rebuild.
-    # Skipped entirely when keypart is empty (no dependencies to build or cache).
+    # Exact key hit = skip build; prefix hit restores stale cache but leaves cache-hit
+    # false, still triggering a rebuild. Skipped when keypart is empty (no deps).
     - name: Restore assembly cache
       id: cache
       if: steps.shas.outputs.keypart != ''
