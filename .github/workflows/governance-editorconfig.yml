@@ -95,13 +95,23 @@ jobs:
       # The same App must be installed in every org listed in governance-orgs.json.
       - name: Generate app token
         id: app-token
+        continue-on-error: true  # 404 means App is not installed; handled by the next step.
         uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         with:
           app-id: ${{ secrets.BHOM_APP_ID }}
           private-key: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
           owner: ${{ matrix.org }}
 
+      # Surfaces a clear, non-disruptive warning rather than a red matrix leg when the App
+      # has not yet been installed in the target org.
+      - name: Skip — App not installed
+        if: steps.app-token.outcome == 'failure'
+        run: |
+          echo "::warning::GitHub App is not installed in '${{ matrix.org }}'. Distribution skipped."
+          echo "::warning::Install the App in that org and re-run, or remove it from .github/config/governance-orgs.json."
+
       - name: Resolve target repos
+        if: steps.app-token.outcome == 'success'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           ORG: ${{ matrix.org }}
@@ -116,12 +126,15 @@ jobs:
             echo "${SINGLE_REPO}" > repo-list.txt
             echo "::notice::Single-repo mode — targeting ${ORG}/${SINGLE_REPO}."
           else
-            # Build a sorted list of non-archived repos to use as an allowlist below.
+            # Build a sorted list of non-archived repos.
             # The properties API does not expose archived status, so this cross-reference
             # ensures archived repos are never included regardless of their property state.
             gh api "/orgs/${ORG}/repos" --paginate \
               --jq '.[] | select(.archived == false) | .name' \
               | LC_ALL=C sort > /tmp/active-repos.txt
+
+            ACTIVE_COUNT=$(wc -l < /tmp/active-repos.txt | tr -d ' ')
+            echo "::notice::[${ORG}] ${ACTIVE_COUNT} non-archived repo(s) in org."
 
             # The custom properties API is the authoritative source for which repos have
             # maturity explicitly set. Derive maturity names from policy-contract.sh so
@@ -135,14 +148,27 @@ jobs:
             done \
               | LC_ALL=C sort -u \
               | grep -v "^DevOps_Toolkit$" \
-              | LC_ALL=C comm -12 - /tmp/active-repos.txt \
-              > repo-list.txt
+              > /tmp/props-repos.txt
+
+            PROPS_COUNT=$(wc -l < /tmp/props-repos.txt | tr -d ' ')
+            echo "::notice::[${ORG}] ${PROPS_COUNT} repo(s) have maturity property set."
+
+            # Diagnose a zero-props result explicitly: if the org has repos but none have the
+            # property set, this is a configuration issue (missing custom property definition
+            # or assignments), not a code issue. Surface it clearly rather than silently
+            # passing an empty list to the distribute step.
+            if [ "${PROPS_COUNT}" -eq 0 ] && [ "${ACTIVE_COUNT}" -gt 0 ]; then
+              echo "::warning::[${ORG}] No repos have maturity set, but ${ACTIVE_COUNT} non-archived repo(s) exist. Check that the 'maturity' custom property is defined and assigned in this org."
+            fi
+
+            LC_ALL=C comm -12 /tmp/props-repos.txt /tmp/active-repos.txt > repo-list.txt
 
             COUNT=$(wc -l < repo-list.txt | tr -d ' ')
-            echo "::notice::${COUNT} target repo(s) found in ${ORG}."
+            echo "::notice::[${ORG}] ${COUNT} repo(s) targeted for distribution."
           fi
 
       - name: Distribute
+        if: steps.app-token.outcome == 'success'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           ORG: ${{ matrix.org }}
