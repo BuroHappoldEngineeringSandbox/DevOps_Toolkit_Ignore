@@ -138,19 +138,19 @@ jobs:
             ACTIVE_COUNT=$(wc -l < /tmp/active-repos.txt | tr -d ' ')
             echo "::notice::[${ORG}] ${ACTIVE_COUNT} non-archived repo(s) in org."
 
-            # The custom properties API is the authoritative source for which repos have
-            # maturity explicitly set. Derive maturity names from policy-contract.sh so
-            # adding a new tier there automatically extends distribution to all orgs.
-            # The API returns 404 (not an empty array) when no repos have a given maturity
-            # value; suppress per-tier errors so unused tiers do not abort the step.
+            # Fetch all repos with their custom property values in a single call, then
+            # filter client-side to repos with 'maturity' set to a known tier.
+            #
+            # Why not a per-tier loop with repository_query=props.maturity:VALUE?
+            # 'repository_query' is a repo-name text search, not a property value filter.
+            # Every tier returned 404; gh api writes the error JSON body to stdout (not
+            # stderr), so 2>/dev/null did not suppress it. The JSON leaked through the
+            # pipeline into props-repos.txt and poisoned the comm intersection.
             source .github/scripts/orchestrator/policy-contract.sh
-            for maturity in "${POLICY_STATES[@]}"; do
-              gh api "/orgs/${ORG}/properties/values" \
-                --paginate \
-                -f "repository_query=props.maturity:${maturity}" \
-                --jq '.[].repository_name' \
-                2>/dev/null || true
-            done \
+            maturity_pattern=$(IFS='|'; echo "${POLICY_STATES[*]}")
+            gh api "/orgs/${ORG}/properties/values" \
+              --paginate \
+              --jq ".[] | select(any(.properties[]; .property_name == \"maturity\" and (.value | test(\"^(${maturity_pattern})$\")))) | .repository_name" \
               | tr '[:upper:]' '[:lower:]' \
               | LC_ALL=C sort -u \
               | grep -v "^devops_toolkit$" \
@@ -162,10 +162,6 @@ jobs:
               echo "::notice::[${ORG}] Repos with maturity set: $(tr '\n' ' ' < /tmp/props-repos.txt)"
             fi
 
-            # Diagnose a zero-props result explicitly: if the org has repos but none have the
-            # property set, this is a configuration issue (missing custom property definition
-            # or assignments), not a code issue. Surface it clearly rather than silently
-            # passing an empty list to the distribute step.
             if [ "${PROPS_COUNT}" -eq 0 ] && [ "${ACTIVE_COUNT}" -gt 0 ]; then
               echo "::warning::[${ORG}] No repos have maturity set, but ${ACTIVE_COUNT} non-archived repo(s) exist. Check that the 'maturity' custom property is defined and assigned in this org."
             fi
@@ -174,8 +170,6 @@ jobs:
 
             COUNT=$(wc -l < repo-list.txt | tr -d ' ')
             echo "::notice::[${ORG}] ${COUNT} repo(s) targeted for distribution."
-            # When props were found but none survived the intersection, dump both lists so
-            # any remaining name normalisation difference is immediately visible in the log.
             if [ "${COUNT}" -eq 0 ] && [ "${PROPS_COUNT}" -gt 0 ]; then
               echo "::warning::[${ORG}] Intersection produced 0 repos despite ${PROPS_COUNT} having maturity set."
               echo "::warning::[${ORG}] props-repos: $(tr '\n' '|' < /tmp/props-repos.txt)"
