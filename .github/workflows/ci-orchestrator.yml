@@ -2,6 +2,8 @@ name: CI Orchestrator
 
 on:
   pull_request:
+    paths-ignore:
+      - '.editorconfig'  # Config-only changes cannot affect build or test outcomes.
   workflow_call:
     inputs:
       dotnet_version:

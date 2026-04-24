@@ -10,6 +10,8 @@ name: CI
 
 on:
   pull_request:
+    paths-ignore:
+      - '.editorconfig'  # Config-only changes cannot affect build or test outcomes.
   push:
     branches:
       - main
