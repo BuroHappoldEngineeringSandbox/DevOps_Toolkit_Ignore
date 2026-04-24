@@ -1,7 +1,6 @@
 name: CI Orchestrator
 
 on:
-  pull_request:
   workflow_call:
     inputs:
       dotnet_version:
@@ -22,8 +21,8 @@ on:
       BHOM_APP_PRIVATE_KEY:
         required: false  # BHoMBot GitHub App private key (PEM). Required when BHOM_APP_ID is set.
 
-# event_name separates PR and post-merge queues on the same branch; -orchestrator suffix
-# prevents colliding with the caller's own concurrency group under workflow_call.
+# github.ref and event_name prevent collisions when the orchestrator is invoked
+# concurrently for different repos/branches via the ruleset engine.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-orchestrator
   cancel-in-progress: true
