@@ -126,11 +126,13 @@ jobs:
             echo "${SINGLE_REPO}" > repo-list.txt
             echo "::notice::Single-repo mode — targeting ${ORG}/${SINGLE_REPO}."
           else
-            # Build a sorted list of non-archived repos.
-            # The properties API does not expose archived status, so this cross-reference
-            # ensures archived repos are never included regardless of their property state.
+            # Build a sorted, lowercased list of non-archived repos.
+            # GitHub repo names are case-insensitive; normalising to lowercase prevents
+            # comm mismatches when the properties API and repos API return different
+            # casings for the same repository name.
             gh api "/orgs/${ORG}/repos" --paginate \
               --jq '.[] | select(.archived == false) | .name' \
+              | tr '[:upper:]' '[:lower:]' \
               | LC_ALL=C sort > /tmp/active-repos.txt
 
             ACTIVE_COUNT=$(wc -l < /tmp/active-repos.txt | tr -d ' ')
@@ -139,19 +141,26 @@ jobs:
             # The custom properties API is the authoritative source for which repos have
             # maturity explicitly set. Derive maturity names from policy-contract.sh so
             # adding a new tier there automatically extends distribution to all orgs.
+            # The API returns 404 (not an empty array) when no repos have a given maturity
+            # value; suppress per-tier errors so unused tiers do not abort the step.
             source .github/scripts/orchestrator/policy-contract.sh
             for maturity in "${POLICY_STATES[@]}"; do
               gh api "/orgs/${ORG}/properties/values" \
                 --paginate \
                 -f "repository_query=props.maturity:${maturity}" \
-                --jq '.[].repository_name'
+                --jq '.[].repository_name' \
+                2>/dev/null || true
             done \
+              | tr '[:upper:]' '[:lower:]' \
               | LC_ALL=C sort -u \
-              | grep -v "^DevOps_Toolkit$" \
+              | grep -v "^devops_toolkit$" \
               > /tmp/props-repos.txt
 
             PROPS_COUNT=$(wc -l < /tmp/props-repos.txt | tr -d ' ')
             echo "::notice::[${ORG}] ${PROPS_COUNT} repo(s) have maturity property set."
+            if [ "${PROPS_COUNT}" -gt 0 ]; then
+              echo "::notice::[${ORG}] Repos with maturity set: $(tr '\n' ' ' < /tmp/props-repos.txt)"
+            fi
 
             # Diagnose a zero-props result explicitly: if the org has repos but none have the
             # property set, this is a configuration issue (missing custom property definition
@@ -165,6 +174,13 @@ jobs:
 
             COUNT=$(wc -l < repo-list.txt | tr -d ' ')
             echo "::notice::[${ORG}] ${COUNT} repo(s) targeted for distribution."
+            # When props were found but none survived the intersection, dump both lists so
+            # any remaining name normalisation difference is immediately visible in the log.
+            if [ "${COUNT}" -eq 0 ] && [ "${PROPS_COUNT}" -gt 0 ]; then
+              echo "::warning::[${ORG}] Intersection produced 0 repos despite ${PROPS_COUNT} having maturity set."
+              echo "::warning::[${ORG}] props-repos: $(tr '\n' '|' < /tmp/props-repos.txt)"
+              echo "::warning::[${ORG}] active-repos (first 10): $(head -10 /tmp/active-repos.txt | tr '\n' '|')"
+            fi
           fi
 
       - name: Distribute
