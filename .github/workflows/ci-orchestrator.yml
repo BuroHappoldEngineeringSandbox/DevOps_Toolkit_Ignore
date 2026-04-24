@@ -1,6 +1,10 @@
 name: CI Orchestrator
 
 on:
+  # Required by GitHub's ruleset "Require workflows" feature: the engine fires the
+  # required workflow as a pull_request event in the target repo's context. workflow_call
+  # allows other callers to invoke it directly (e.g. from a dedicated ci.yml in any repo).
+  pull_request:
   workflow_call:
     inputs:
       dotnet_version:
@@ -22,7 +26,7 @@ on:
         required: false  # BHoMBot GitHub App private key (PEM). Required when BHOM_APP_ID is set.
 
 # github.ref and event_name prevent collisions when the orchestrator is invoked
-# concurrently for different repos/branches via the ruleset engine.
+# concurrently for different repos/branches via both the ruleset engine and direct PR triggers.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-orchestrator
   cancel-in-progress: true
@@ -57,19 +61,25 @@ jobs:
           echo "dotnet_version=${{ inputs.dotnet_version || '8.0' }}" >> "$GITHUB_OUTPUT"
           echo "configuration=${{ inputs.configuration || 'Release' }}"  >> "$GITHUB_OUTPUT"
 
-      # Governance branches (opened by the editorconfig distribution workflow) only change
-      # .editorconfig — no job can meaningfully fail. Short-circuit here so every subsequent
-      # step is skipped, leaving run_build, run_unit_tests, and state empty. Empty outputs
-      # evaluate as != 'true', which naturally suppresses all child jobs without extra
-      # conditions. Works for both direct pull_request triggers and ruleset invocations,
-      # where paths-ignore on the trigger is bypassed by the ruleset engine.
-      - name: Detect governance branch
+      # Two conditions short-circuit all subsequent setup work by setting skip=true:
+      # 1. Governance branches (governance/*): only .editorconfig changes, no build can fail.
+      # 2. DevOps_Toolkit self-execution: the orchestrator must declare on: pull_request to
+      #    satisfy GitHub's ruleset required-workflow constraint, which causes it to fire on
+      #    its own repo's PRs. DevOps_Toolkit is an infrastructure repo, not a governed
+      #    code repo, so there is nothing to validate here.
+      # In both cases all downstream step outputs remain empty, which naturally suppresses
+      # every child job (empty string != 'true') and prevents emit-health from firing on
+      # an empty maturity value.
+      - name: Detect skip conditions
         id: governance
         shell: bash
         run: |
           if [[ "${{ github.head_ref }}" == governance/* ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Governance branch — all CI jobs will be skipped."
+          elif [[ "${{ github.repository }}" == */DevOps_Toolkit ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::DevOps_Toolkit self-execution — all CI jobs will be skipped."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
