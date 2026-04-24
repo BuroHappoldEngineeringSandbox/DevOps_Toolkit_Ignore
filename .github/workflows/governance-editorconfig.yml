@@ -1,10 +1,10 @@
 name: Distribute .editorconfig
 
-# Triggers whenever .editorconfig changes on main, distributing the
-# updated file to every active BHoM repo with a maturity custom property set.
-# PRs are opened as the DevOps GitHub App for manual review and merge.
-# Run workflow_dispatch with dry_run=true to preview affected repos without
-# opening any PRs.
+# Triggered on push to main when .editorconfig changes, or manually via workflow_dispatch.
+# Reads the org list from .github/config/governance-orgs.json and runs one parallel matrix
+# leg per org. Each leg mints its own short-lived App token scoped to that org, then opens
+# PRs in every repo with a maturity custom property set.
+# Use dry_run=true to preview affected repos without opening PRs.
 
 on:
   push:
@@ -13,8 +13,13 @@ on:
       - '.editorconfig'
   workflow_dispatch:
     inputs:
+      org:
+        description: 'Single org to target (e.g. BuroHappoldEngineering). Leave blank for all orgs.'
+        type: string
+        required: false
+        default: ''
       repo:
-        description: 'Single repo to target (e.g. BHoM_Adapter). Leave blank for all BHoM repos.'
+        description: 'Single repo to target (e.g. BHoM_Adapter). Leave blank for all repos in the org.'
         type: string
         required: false
         default: ''
@@ -24,18 +29,20 @@ on:
         required: false
         default: false
 
-# Never cancel a distribution mid-flight; a partial run leaves repos in
-# inconsistent states. A new push will supersede once this run finishes.
+# Prevent concurrent distribution runs; a partial run leaves repos in inconsistent states.
+# A newer push queues until the current run completes.
 concurrency:
   group: distribute-editorconfig
   cancel-in-progress: false
 
 jobs:
-  distribute:
+  setup:
     runs-on: ubuntu-latest
-    timeout-minutes: 50  # App token TTL is 60 min; cap job below that to avoid late-run 401s.
+    timeout-minutes: 5
     permissions:
-      contents: read  # DevOps_Toolkit checkout only; target repo writes use app token.
+      contents: read
+    outputs:
+      orgs: ${{ steps.resolve-orgs.outputs.orgs }}
 
     steps:
       - name: Checkout DevOps_Toolkit
@@ -43,22 +50,61 @@ jobs:
         with:
           fetch-depth: 1
 
-      # Generates a short-lived (1 h) installation token scoped to the org.
+      - name: Resolve target orgs
+        id: resolve-orgs
+        env:
+          SINGLE_ORG: ${{ inputs.org }}
+        run: |
+          if [ -n "${SINGLE_ORG}" ]; then
+            if ! echo "${SINGLE_ORG}" | grep -qE '^[A-Za-z0-9_.-]+$'; then
+              echo "::error::Invalid org name '${SINGLE_ORG}'. Only alphanumeric characters, hyphens, underscores, and dots are allowed."
+              exit 1
+            fi
+            # Validate against the manifest to prevent targeting orgs outside the governance model.
+            if ! jq -e --arg o "${SINGLE_ORG}" 'index($o) != null' .github/config/governance-orgs.json > /dev/null; then
+              echo "::error::Org '${SINGLE_ORG}' is not listed in .github/config/governance-orgs.json."
+              exit 1
+            fi
+            orgs="[\"${SINGLE_ORG}\"]"
+          else
+            orgs=$(jq -c '.' .github/config/governance-orgs.json)
+          fi
+          echo "orgs=${orgs}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Target org(s): $(echo "${orgs}" | jq -r '.[]' | tr '\n' ' ')"
+
+  distribute:
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 50  # App token TTL is 60 min; cap job below that to avoid late-run 401s.
+    permissions:
+      contents: read  # DevOps_Toolkit checkout only; target repo writes use app token.
+    strategy:
+      matrix:
+        org: ${{ fromJson(needs.setup.outputs.orgs) }}
+      fail-fast: false  # One org's failure does not cancel distribution to other orgs.
+
+    steps:
+      - name: Checkout DevOps_Toolkit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      # Generates a short-lived (1 h) installation token scoped to the target org.
       # Required secrets (org-level): BHOM_APP_ID, BHOM_APP_PRIVATE_KEY.
-      # Required App permissions: Contents (rw), Pull requests (rw).
+      # Required App permissions: Contents (rw), Pull requests (rw), Organisation custom properties (read).
+      # The same App must be installed in every org listed in governance-orgs.json.
       - name: Generate app token
         id: app-token
         uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         with:
           app-id: ${{ secrets.BHOM_APP_ID }}
           private-key: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
+          owner: ${{ matrix.org }}
 
       - name: Resolve target repos
-        id: repos
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          ORG: ${{ github.repository_owner }}
+          ORG: ${{ matrix.org }}
           SINGLE_REPO: ${{ inputs.repo }}
         run: |
           if [ -n "${SINGLE_REPO}" ]; then
@@ -66,30 +112,39 @@ jobs:
               echo "::error::Invalid repo name '${SINGLE_REPO}'. Only alphanumeric characters, hyphens, underscores, and dots are allowed."
               exit 1
             fi
-            # Write directly to repo-list.txt, bypassing the Search API.
+            # Write directly to repo-list.txt, bypassing the properties API.
             echo "${SINGLE_REPO}" > repo-list.txt
-            echo "::notice::Single-repo mode — targeting ${SINGLE_REPO}."
+            echo "::notice::Single-repo mode — targeting ${ORG}/${SINGLE_REPO}."
           else
-            # Query once per maturity tier; sort -u deduplicates across all three result sets.
-            for maturity in prototype alpha beta; do
-              gh api "search/repositories?q=org:${ORG}+props.maturity:${maturity}&per_page=100" \
+            # Build a sorted list of non-archived repos to use as an allowlist below.
+            # The properties API does not expose archived status, so this cross-reference
+            # ensures archived repos are never included regardless of their property state.
+            gh api "/orgs/${ORG}/repos" --paginate \
+              --jq '.[] | select(.archived == false) | .name' \
+              | LC_ALL=C sort > /tmp/active-repos.txt
+
+            # The custom properties API is the authoritative source for which repos have
+            # maturity explicitly set. Derive maturity names from policy-contract.sh so
+            # adding a new tier there automatically extends distribution to all orgs.
+            source .github/scripts/orchestrator/policy-contract.sh
+            for maturity in "${POLICY_STATES[@]}"; do
+              gh api "/orgs/${ORG}/properties/values" \
                 --paginate \
-                --jq '.items[] | select(.archived == false) | .name'
+                -f "repository_query=props.maturity:${maturity}" \
+                --jq '.[].repository_name'
             done \
-              | sort -u \
+              | LC_ALL=C sort -u \
               | grep -v "^DevOps_Toolkit$" \
+              | LC_ALL=C comm -12 - /tmp/active-repos.txt \
               > repo-list.txt
 
             COUNT=$(wc -l < repo-list.txt | tr -d ' ')
-            echo "::notice::${COUNT} target repo(s) found."
-            if [ "$COUNT" -ge 990 ]; then
-              echo "::warning::Repo count (${COUNT}) is near the Search API 1000-result ceiling. Some repos may have been excluded from distribution."
-            fi
+            echo "::notice::${COUNT} target repo(s) found in ${ORG}."
           fi
 
       - name: Distribute
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          ORG: ${{ github.repository_owner }}
+          ORG: ${{ matrix.org }}
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
         run: bash .github/scripts/distribute-editorconfig.sh repo-list.txt

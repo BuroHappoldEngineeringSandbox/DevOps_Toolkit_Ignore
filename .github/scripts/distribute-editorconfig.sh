@@ -148,7 +148,7 @@ done < "$REPO_FILE"
 # ── Step summary ─────────────────────────────────────────────────────────────
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {
-    echo "### .editorconfig distribution"
+    echo "### .editorconfig distribution — ${ORG}"
     echo ""
     echo "| | Count |"
     echo "|---|---|"
