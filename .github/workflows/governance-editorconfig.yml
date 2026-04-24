@@ -2,7 +2,7 @@ name: Distribute .editorconfig
 
 # Triggers whenever .editorconfig changes on main, distributing the
 # updated file to every active BHoM repo with a maturity custom property set.
-# PRs are opened as the DevOps GitHub App and auto-merge once CI passes.
+# PRs are opened as the DevOps GitHub App for manual review and merge.
 # Run workflow_dispatch with dry_run=true to preview affected repos without
 # opening any PRs.
 
@@ -33,7 +33,7 @@ concurrency:
 jobs:
   distribute:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 50  # App token TTL is 60 min; cap job below that to avoid late-run 401s.
     permissions:
       contents: read  # DevOps_Toolkit checkout only; target repo writes use app token.
 
@@ -62,11 +62,15 @@ jobs:
           SINGLE_REPO: ${{ inputs.repo }}
         run: |
           if [ -n "${SINGLE_REPO}" ]; then
-            # Single-repo mode: bypass the search API entirely.
+            if ! echo "${SINGLE_REPO}" | grep -qE '^[A-Za-z0-9_.-]+$'; then
+              echo "::error::Invalid repo name '${SINGLE_REPO}'. Only alphanumeric characters, hyphens, underscores, and dots are allowed."
+              exit 1
+            fi
+            # Write directly to repo-list.txt, bypassing the Search API.
             echo "${SINGLE_REPO}" > repo-list.txt
             echo "::notice::Single-repo mode — targeting ${SINGLE_REPO}."
           else
-            # Query per maturity value using custom property search and deduplicate.
+            # Query once per maturity tier; sort -u deduplicates across all three result sets.
             for maturity in prototype alpha beta; do
               gh api "search/repositories?q=org:${ORG}+props.maturity:${maturity}&per_page=100" \
                 --paginate \
@@ -78,6 +82,9 @@ jobs:
 
             COUNT=$(wc -l < repo-list.txt | tr -d ' ')
             echo "::notice::${COUNT} target repo(s) found."
+            if [ "$COUNT" -ge 990 ]; then
+              echo "::warning::Repo count (${COUNT}) is near the Search API 1000-result ceiling. Some repos may have been excluded from distribution."
+            fi
           fi
 
       - name: Distribute

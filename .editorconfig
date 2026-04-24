@@ -5,10 +5,11 @@
 
 root = true
 
-# All files: spaces, 4-space indent, no trailing whitespace, LF-terminated final line, UTF-8.
+# All files — space indent (4), LF line endings, trim trailing whitespace, insert final newline, UTF-8.
 [*]
 indent_style              = space
 indent_size               = 4
+end_of_line               = lf
 trim_trailing_whitespace  = true
 insert_final_newline      = true
 charset                   = utf-8
@@ -19,6 +20,10 @@ indent_size = 2
 
 [*.{yml,yaml,json}]
 indent_size = 2
+
+# Markdown: preserve trailing two-space hard line breaks (CommonMark <br> syntax).
+[*.md]
+trim_trailing_whitespace = false
 
 [*.cs]
 # IDE1006 — Method names must be PascalCase.

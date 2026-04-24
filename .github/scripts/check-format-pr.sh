@@ -7,8 +7,7 @@
 
 set -euo pipefail
 
-# Apply canonical EditorConfig.
-# TOOLKIT_DIR is the path where DevOps_Toolkit was checked out (default: _toolkit).
+# TOOLKIT_DIR can be overridden if DevOps_Toolkit was checked out at a non-default path.
 TOOLKIT_DIR="${TOOLKIT_DIR:-_toolkit}"
 CANONICAL_EDITORCONFIG="$TOOLKIT_DIR/.editorconfig"
 
@@ -33,7 +32,7 @@ while IFS= read -r file; do
   dir=$(dirname "$file")
   csproj=""
   while [ "$dir" != "." ] && [ "$dir" != "/" ]; do
-    # shellcheck disable=SC2012
+
     found=$(find "$dir" -maxdepth 1 -name "*.csproj" 2>/dev/null | head -1)
     if [ -n "$found" ]; then
       csproj="$found"
