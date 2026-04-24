@@ -46,7 +46,6 @@ jobs:
       compliance_files_changed: ${{ steps.changed.outputs.compliance_files_changed }}
       dataset_files_changed:    ${{ steps.changed.outputs.dataset_files_changed }}
       build_relevant_changed:   ${{ steps.changed.outputs.build_relevant_changed }}
-      governance_branch:        ${{ steps.governance.outputs.skip }}
       dotnet_version:           ${{ steps.resolve-inputs.outputs.dotnet_version }}
       configuration:            ${{ steps.resolve-inputs.outputs.configuration }}
 
@@ -60,30 +59,32 @@ jobs:
           echo "configuration=${{ inputs.configuration || 'Release' }}"  >> "$GITHUB_OUTPUT"
 
       # Governance branches (opened by the editorconfig distribution workflow) only change
-      # .editorconfig — build and unit-test cannot fail. Skip them to avoid unnecessary
-      # runner cost on every PR force-push, regardless of how the orchestrator was invoked.
-      # This works for both direct pull_request triggers and org-ruleset invocations, where
-      # paths-ignore on the trigger is bypassed by the ruleset engine.
+      # .editorconfig — no job can meaningfully fail. Short-circuit here so every subsequent
+      # step is skipped, leaving run_build, run_unit_tests, and state empty. Empty outputs
+      # evaluate as != 'true', which naturally suppresses all child jobs without extra
+      # conditions. Works for both direct pull_request triggers and ruleset invocations,
+      # where paths-ignore on the trigger is bypassed by the ruleset engine.
       - name: Detect governance branch
         id: governance
         shell: bash
         run: |
           if [[ "${{ github.head_ref }}" == governance/* ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Governance branch — build and unit-test jobs will be skipped."
+            echo "::notice::Governance branch — all CI jobs will be skipped."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout
+        if: steps.governance.outputs.skip != 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
 
       # format, compliance, and dataset are PR-only and skipped when no relevant files changed.
-      # build and unit-tests run on every PR unless the branch is governance/* or only
-      # documentation/config files changed.
+      # build and unit-tests run on every PR unless only documentation/config files changed.
       - name: Detect changed file types
+        if: steps.governance.outputs.skip != 'true'
         id: changed
         shell: bash
         run: |
@@ -138,6 +139,7 @@ jobs:
 
       # secrets context is unavailable in step if: expressions; gate on a prior step's output.
       - name: Check App credentials
+        if: steps.governance.outputs.skip != 'true'
         id: app-check
         shell: bash
         env:
@@ -151,7 +153,7 @@ jobs:
 
       - name: Generate dependency token
         id: dep-token
-        if: steps.app-check.outputs.available == 'true'
+        if: steps.governance.outputs.skip != 'true' && steps.app-check.outputs.available == 'true'
         uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         with:
           app-id: ${{ secrets.BHOM_APP_ID }}
@@ -159,6 +161,7 @@ jobs:
           owner: ${{ github.repository_owner }}
 
       - name: Read repo maturity
+        if: steps.governance.outputs.skip != 'true'
         id: state
         env:
           GH_TOKEN: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
@@ -179,6 +182,7 @@ jobs:
 
       # Same org default token can read this repo; pass GH_TOKEN if the toolkit is private elsewhere.
       - name: Checkout policy (DevOps_Toolkit)
+        if: steps.governance.outputs.skip != 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ github.repository_owner }}/DevOps_Toolkit
@@ -187,11 +191,13 @@ jobs:
           token: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
 
       - name: Validate policy.json
+        if: steps.governance.outputs.skip != 'true'
         run: bash _central/.github/scripts/orchestrator/validate-policy.sh
 
       # Validates against POLICY_STATES from policy-contract.sh — the single source of truth.
       # A new tier added to the contract is enforced here automatically.
       - name: Validate repo maturity
+        if: steps.governance.outputs.skip != 'true'
         env:
           STATE: ${{ steps.state.outputs.state }}
         run: |
@@ -209,6 +215,7 @@ jobs:
           echo "::notice::Repo maturity: $STATE"
 
       - name: Read policy
+        if: steps.governance.outputs.skip != 'true'
         id: policy
         env:
           STATE: ${{ steps.state.outputs.state }}
@@ -264,7 +271,6 @@ jobs:
     if: |
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_build == 'true' &&
-      needs.setup.outputs.governance_branch != 'true' &&
       (github.event_name != 'pull_request' || needs.setup.outputs.build_relevant_changed == 'true')
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-build.yml@main  # MIGRATE-TO-PROD: update org when moving to production
     with:
@@ -281,7 +287,6 @@ jobs:
     if: |
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_unit_tests == 'true' &&
-      needs.setup.outputs.governance_branch != 'true' &&
       (github.event_name != 'pull_request' || needs.setup.outputs.build_relevant_changed == 'true')
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-unit-tests.yml@main  # MIGRATE-TO-PROD: update org when moving to production
     with:
@@ -297,7 +302,7 @@ jobs:
   # in ci-emit-health.yml prevents telemetry failures from blocking required checks.
   emit-health:
     needs: [setup, format, compliance, dataset, build, unit-tests]
-    if: always() && needs.setup.result != 'skipped'
+    if: always() && needs.setup.result != 'skipped' && needs.setup.outputs.state != ''
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-emit-health.yml@main  # MIGRATE-TO-PROD: update org when moving to production
     with:
       maturity:          ${{ needs.setup.outputs.state }}
