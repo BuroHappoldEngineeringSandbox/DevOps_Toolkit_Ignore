@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Distributes config/.editorconfig to all target BHoM repos.
+# Distributes .editorconfig to all target BHoM repos.
 #
 # Usage: distribute-editorconfig.sh <repo-list-file>
 #
@@ -12,10 +12,14 @@
 #   - Skips if the repo's .editorconfig already matches the canonical file.
 #   - Creates branch governance/update-editorconfig-YYYY-MM-DD (datestamped to
 #     prevent stale approvals from carrying over if the branch is re-pushed).
-#   - Closes any open PRs targeting older governance/update-editorconfig-* branches
+#   - Closes any open PRs opened from older governance/update-editorconfig-* branches
 #     before opening a fresh PR for the new branch.
 #   - Failures are collected and reported at the end without stopping the loop.
 set -euo pipefail
+
+# Remove cloned repos on any exit (normal or error). Safe on ephemeral runners;
+# prevents disk accumulation on self-hosted runners.
+trap 'rm -rf targets/' EXIT
 
 REPO_FILE="${1:?Usage: distribute-editorconfig.sh <repo-list-file>}"
 CANONICAL_ABS="$(pwd)/.editorconfig"
@@ -54,11 +58,21 @@ while IFS= read -r repo; do
   TARGET_DIR="targets/$repo"
   rm -rf "$TARGET_DIR"
 
-  if ! gh repo clone "$ORG/$repo" "$TARGET_DIR" -- --depth=1 --branch develop --quiet; then
-    echo "::error::Failed to clone $ORG/$repo"
-    FAILURES+=("$repo")
-    echo "::endgroup::"
-    continue
+  BASE_BRANCH="develop"
+  if ! gh repo clone "$ORG/$repo" "$TARGET_DIR" -- --depth=1 --branch develop --quiet 2>/dev/null; then
+    BASE_BRANCH=$(gh repo view "$ORG/$repo" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)
+    if [ -z "$BASE_BRANCH" ]; then
+      echo "::error::Failed to determine default branch for $ORG/$repo"
+      FAILURES+=("$repo")
+      echo "::endgroup::"
+      continue
+    fi
+    if ! gh repo clone "$ORG/$repo" "$TARGET_DIR" -- --depth=1 --branch "$BASE_BRANCH" --quiet; then
+      echo "::error::Failed to clone $ORG/$repo (branch: $BASE_BRANCH)"
+      FAILURES+=("$repo")
+      echo "::endgroup::"
+      continue
+    fi
   fi
 
   if diff -q "$CANONICAL_ABS" "$TARGET_DIR/.editorconfig" >/dev/null 2>&1; then
@@ -88,7 +102,7 @@ while IFS= read -r repo; do
     # --force is safe: this branch is exclusively owned by this workflow.
     git push origin "$BRANCH" --force
 
-    # Close any stale PRs from older datestamped branches.
+    # Close PRs opened from earlier governance branches so reviewers see only one open PR per repo.
     gh pr list \
       --repo "$ORG/$repo" \
       --state open \
@@ -96,8 +110,7 @@ while IFS= read -r repo; do
       --jq ".[] | select(.headRefName | startswith(\"${BRANCH_PREFIX}\")) | select(.headRefName != \"${BRANCH}\") | .number" \
     | xargs -r -I{} gh pr close {} --repo "$ORG/$repo" --comment "Superseded by a newer sync run."
 
-    # Open a PR if one doesn't already exist — a new commit on the existing
-    # branch is sufficient to update an open PR; no need to recreate it.
+    # A new commit on an already-open PR branch updates it automatically; only create if none exists.
     if gh pr list \
         --repo "$ORG/$repo" \
         --state open \
@@ -109,9 +122,9 @@ while IFS= read -r repo; do
       PR_URL=$(gh pr create \
         --repo "$ORG/$repo" \
         --head "$BRANCH" \
-        --base develop \
+        --base "$BASE_BRANCH" \
         --title "chore: update .editorconfig" \
-        --body "Automated update of \`.editorconfig\` from [DevOps_Toolkit](https://github.com/${ORG}/DevOps_Toolkit/blob/main/config/.editorconfig).
+        --body "Automated update of \`.editorconfig\` from [DevOps_Toolkit](https://github.com/${ORG}/DevOps_Toolkit/blob/main/.editorconfig).
 
 Formatting rules are managed centrally in DevOps_Toolkit. This PR was opened automatically.
 
@@ -135,7 +148,7 @@ done < "$REPO_FILE"
 # ── Step summary ─────────────────────────────────────────────────────────────
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {
-    echo "### .editorconfig distribution"
+    echo "### .editorconfig distribution — ${ORG}"
     echo ""
     echo "| | Count |"
     echo "|---|---|"
@@ -168,3 +181,4 @@ if [ "$DRY_RUN" = "true" ]; then
 else
   echo "::notice::Distribution complete. Updated: $UPDATED  Skipped: $SKIPPED"
 fi
+# targets/ cleanup is handled by the EXIT trap.

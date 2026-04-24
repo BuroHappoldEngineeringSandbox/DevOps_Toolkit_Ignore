@@ -1,0 +1,36 @@
+# Template: copy this file to .github/workflows/ci.yml in your repository.
+#
+# Calls the DevOps_Toolkit CI orchestrator, which runs format checking,
+# compliance analysis, dataset validation, build, and unit tests according
+# to your repository's maturity level (prototype | alpha | beta).
+#
+# Before enabling this workflow, complete the prerequisites in README.md.
+
+name: CI
+
+on:
+  pull_request:
+    paths-ignore:
+      - '.editorconfig'  # Config-only changes cannot affect build or test outcomes.
+  push:
+    branches:
+      - main
+      - develop
+
+# Prevent duplicate runs: cancel any in-flight run for the same ref/event pair
+# when a new one is triggered.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    # Replace the org below with the org that hosts your DevOps_Toolkit instance.
+    uses: YOUR_ORG/DevOps_Toolkit/.github/workflows/ci-orchestrator.yml@main
+    secrets:
+      BHOM_APP_ID:          ${{ secrets.BHOM_APP_ID }}
+      BHOM_APP_PRIVATE_KEY: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
+    # Optional overrides — omit to use the defaults (dotnet_version: "8.0", configuration: "Release").
+    # with:
+    #   dotnet_version: "9.0"
+    #   configuration: "Release"

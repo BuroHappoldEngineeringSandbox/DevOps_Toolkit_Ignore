@@ -1,8 +1,18 @@
 name: CI Orchestrator
 
 on:
-  pull_request:
   workflow_call:
+    inputs:
+      dotnet_version:
+        type: string
+        required: false
+        default: "8.0"
+        description: ".NET SDK version passed to all child workflows (build, compliance, dataset, unit-tests, format)."
+      configuration:
+        type: string
+        required: false
+        default: "Release"
+        description: "Build configuration (Release/Debug) passed to all child workflows."
     secrets:
       GH_TOKEN:
         required: false  # optional PAT for private deps; else github.token
@@ -10,12 +20,9 @@ on:
         required: false  # BHoMBot GitHub App ID — used to mint a short-lived token for cross-org dep cloning.
       BHOM_APP_PRIVATE_KEY:
         required: false  # BHoMBot GitHub App private key (PEM). Required when BHOM_APP_ID is set.
-      TEAMS_WEBHOOK_URL:
-        required: false  # Teams incoming webhook URL for post-merge failure notifications.
 
-# Under workflow_call, github.workflow is the caller's name; suffix avoids deadlock with caller.
-# event_name is included so PR runs and post-merge (push) runs on the same branch use
-# separate concurrency queues and do not cancel each other.
+# github.ref and event_name prevent collisions when the orchestrator is invoked
+# concurrently for different repos/branches via the ruleset engine.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-orchestrator
   cancel-in-progress: true
@@ -37,16 +44,46 @@ jobs:
       format_files_changed:     ${{ steps.changed.outputs.format_files_changed }}
       compliance_files_changed: ${{ steps.changed.outputs.compliance_files_changed }}
       dataset_files_changed:    ${{ steps.changed.outputs.dataset_files_changed }}
+      build_relevant_changed:   ${{ steps.changed.outputs.build_relevant_changed }}
+      dotnet_version:           ${{ steps.resolve-inputs.outputs.dotnet_version }}
+      configuration:            ${{ steps.resolve-inputs.outputs.configuration }}
 
     steps:
+      # inputs context is empty under pull_request; fall back to defaults.
+      - name: Resolve inputs
+        id: resolve-inputs
+        shell: bash
+        run: |
+          echo "dotnet_version=${{ inputs.dotnet_version || '8.0' }}" >> "$GITHUB_OUTPUT"
+          echo "configuration=${{ inputs.configuration || 'Release' }}"  >> "$GITHUB_OUTPUT"
+
+      # Governance branches (opened by the editorconfig distribution workflow) only change
+      # .editorconfig — no job can meaningfully fail. Short-circuit here so every subsequent
+      # step is skipped, leaving run_build, run_unit_tests, and state empty. Empty outputs
+      # evaluate as != 'true', which naturally suppresses all child jobs without extra
+      # conditions. Works for both direct pull_request triggers and ruleset invocations,
+      # where paths-ignore on the trigger is bypassed by the ruleset engine.
+      - name: Detect governance branch
+        id: governance
+        shell: bash
+        run: |
+          if [[ "${{ github.head_ref }}" == governance/* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Governance branch — all CI jobs will be skipped."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout
+        if: steps.governance.outputs.skip != 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
 
-      # Skip PR-only child runners (format, compliance, dataset) when no relevant files changed.
-      # build and unit-tests run unconditionally on every event.
+      # format, compliance, and dataset are PR-only and skipped when no relevant files changed.
+      # build and unit-tests run on every PR unless only documentation/config files changed.
       - name: Detect changed file types
+        if: steps.governance.outputs.skip != 'true'
         id: changed
         shell: bash
         run: |
@@ -56,6 +93,8 @@ jobs:
             echo "format_files_changed=false"     >> "$GITHUB_OUTPUT"
             echo "compliance_files_changed=false" >> "$GITHUB_OUTPUT"
             echo "dataset_files_changed=false"    >> "$GITHUB_OUTPUT"
+            # build_relevant_changed is not set for non-PR events; job conditions treat
+            # non-PR runs as always build-relevant via the github.event_name guard.
             exit 0
           fi
 
@@ -79,8 +118,7 @@ jobs:
             echo "::notice::No compliance-relevant files changed — compliance job will be skipped."
           fi
 
-          # dataset: *.json files whose path contains a 'datasets' path segment — mirrors BHoMBot's Contains("datasets") filter.
-          # The (^|/) anchor ensures 'datasets' is a path component, not just a substring of a filename.
+          # dataset: *.json under a 'datasets/' path segment (anchored to prevent substring matches).
           if echo "$CHANGED" | grep -qiE '(^|/)datasets[^/]*\.json$'; then
             echo "dataset_files_changed=true" >> "$GITHUB_OUTPUT"
           else
@@ -88,9 +126,19 @@ jobs:
             echo "::notice::No dataset files changed — dataset job will be skipped."
           fi
 
-      # Token is local to this job; child workflows each regenerate their own via the same pattern.
-      # secrets context is unavailable in step `if:` expressions, so we gate on a prior step's output.
+          # build/unit-tests: skip on PRs when every changed file is in the known-safe set
+          # (documentation and plain config). Any file outside this set is potentially
+          # build-relevant, so the conservative default is to run.
+          if echo "$CHANGED" | grep -qvE '\.(md|txt|editorconfig|gitattributes|gitignore)$'; then
+            echo "build_relevant_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build_relevant_changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Only documentation/config files changed — build and unit-test jobs will be skipped."
+          fi
+
+      # secrets context is unavailable in step if: expressions; gate on a prior step's output.
       - name: Check App credentials
+        if: steps.governance.outputs.skip != 'true'
         id: app-check
         shell: bash
         env:
@@ -104,7 +152,7 @@ jobs:
 
       - name: Generate dependency token
         id: dep-token
-        if: steps.app-check.outputs.available == 'true'
+        if: steps.governance.outputs.skip != 'true' && steps.app-check.outputs.available == 'true'
         uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         with:
           app-id: ${{ secrets.BHOM_APP_ID }}
@@ -112,26 +160,28 @@ jobs:
           owner: ${{ github.repository_owner }}
 
       - name: Read repo maturity
+        if: steps.governance.outputs.skip != 'true'
         id: state
         env:
           GH_TOKEN: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
         run: |
           set -euo pipefail
+
+          # Fork PRs: GITHUB_TOKEN is scoped to the fork and cannot read the parent repo's
+          # custom properties. Configure BHOM_APP_ID, or set maturity on the fork itself.
+          # See README.md — "Fork PR behaviour".
           STATE=$(gh api "repos/${{ github.repository }}/properties/values" \
             --jq '.[] | select(.property_name == "maturity") | .value // empty')
           if [ -z "$STATE" ]; then
-            echo "::error::Repository custom property 'maturity' is not set. Set it to one of: prototype | alpha | beta"
+            echo "::error::Repository custom property 'maturity' is not set. Set it to one of: $(IFS=" | "; echo "${POLICY_STATES[*]:-prototype | alpha | beta}")."
             exit 1
           fi
-          case "$STATE" in
-            prototype|alpha|beta) ;;
-            *) echo "::error::Invalid maturity value '$STATE'. Must be exactly: prototype | alpha | beta"; exit 1 ;;
-          esac
+          # Value validation is deferred to 'Validate repo maturity' below (post-checkout).
           echo "state=$STATE" >> "$GITHUB_OUTPUT"
-          echo "::notice::Repo maturity: $STATE"
 
       # Same org default token can read this repo; pass GH_TOKEN if the toolkit is private elsewhere.
       - name: Checkout policy (DevOps_Toolkit)
+        if: steps.governance.outputs.skip != 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ github.repository_owner }}/DevOps_Toolkit
@@ -140,9 +190,31 @@ jobs:
           token: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
 
       - name: Validate policy.json
+        if: steps.governance.outputs.skip != 'true'
         run: bash _central/.github/scripts/orchestrator/validate-policy.sh
 
+      # Validates against POLICY_STATES from policy-contract.sh — the single source of truth.
+      # A new tier added to the contract is enforced here automatically.
+      - name: Validate repo maturity
+        if: steps.governance.outputs.skip != 'true'
+        env:
+          STATE: ${{ steps.state.outputs.state }}
+        run: |
+          set -euo pipefail
+          # shellcheck source=_central/.github/scripts/orchestrator/policy-contract.sh
+          source _central/.github/scripts/orchestrator/policy-contract.sh
+          valid=0
+          for s in "${POLICY_STATES[@]}"; do
+            [ "$s" = "$STATE" ] && valid=1
+          done
+          if [ "$valid" -eq 0 ]; then
+            echo "::error::Invalid maturity value '$STATE'. Must be one of: ${POLICY_STATES[*]}"
+            exit 1
+          fi
+          echo "::notice::Repo maturity: $STATE"
+
       - name: Read policy
+        if: steps.governance.outputs.skip != 'true'
         id: policy
         env:
           STATE: ${{ steps.state.outputs.state }}
@@ -159,8 +231,8 @@ jobs:
       needs.setup.outputs.format_files_changed == 'true'
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-format.yml@main  # MIGRATE-TO-PROD: update org when moving to production
     with:
-      dotnet_version: "8.0"
-    secrets: inherit
+      dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
+    # ci-format.yml declares no secrets; GITHUB_TOKEN is sufficient (public checkouts only).
 
   compliance:
     needs: setup
@@ -170,10 +242,13 @@ jobs:
       needs.setup.outputs.compliance_files_changed == 'true'
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-compliance.yml@main  # MIGRATE-TO-PROD: update org when moving to production
     with:
-      dotnet_version:    "8.0"
-      configuration:     "Release"
+      dotnet_version:    ${{ needs.setup.outputs.dotnet_version }}
+      configuration:     ${{ needs.setup.outputs.configuration }}
       compliance_checks: ${{ needs.setup.outputs.compliance_checks }}
-    secrets: inherit
+    secrets:
+      GH_TOKEN:            ${{ secrets.GH_TOKEN }}
+      BHOM_APP_ID:         ${{ secrets.BHOM_APP_ID }}
+      BHOM_APP_PRIVATE_KEY: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
 
   dataset:
     needs: setup
@@ -183,40 +258,50 @@ jobs:
       needs.setup.outputs.dataset_files_changed == 'true'
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-dataset.yml@main  # MIGRATE-TO-PROD: update org when moving to production
     with:
-      dotnet_version: "8.0"
-      configuration:  "Release"
-    secrets: inherit
+      dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
+      configuration:  ${{ needs.setup.outputs.configuration }}
+    secrets:
+      GH_TOKEN:            ${{ secrets.GH_TOKEN }}
+      BHOM_APP_ID:         ${{ secrets.BHOM_APP_ID }}
+      BHOM_APP_PRIVATE_KEY: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
 
   build:
     needs: setup
     if: |
       needs.setup.result == 'success' &&
-      needs.setup.outputs.run_build == 'true'
+      needs.setup.outputs.run_build == 'true' &&
+      (github.event_name != 'pull_request' || needs.setup.outputs.build_relevant_changed == 'true')
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-build.yml@main  # MIGRATE-TO-PROD: update org when moving to production
     with:
-      dotnet_version: "8.0"
-      configuration:  "Release"
-    secrets: inherit
+      dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
+      configuration:  ${{ needs.setup.outputs.configuration }}
+    secrets:
+      GH_TOKEN:            ${{ secrets.GH_TOKEN }}
+      BHOM_APP_ID:         ${{ secrets.BHOM_APP_ID }}
+      BHOM_APP_PRIVATE_KEY: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
 
   # Unit-tests resolves its own deps and builds the test solution independently of ci-build.
   unit-tests:
     needs: setup
     if: |
       needs.setup.result == 'success' &&
-      needs.setup.outputs.run_unit_tests == 'true'
+      needs.setup.outputs.run_unit_tests == 'true' &&
+      (github.event_name != 'pull_request' || needs.setup.outputs.build_relevant_changed == 'true')
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-unit-tests.yml@main  # MIGRATE-TO-PROD: update org when moving to production
     with:
-      dotnet_version: "8.0"
-      configuration:  "Release"
-    secrets: inherit
+      dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
+      configuration:  ${{ needs.setup.outputs.configuration }}
+    secrets:
+      GH_TOKEN:            ${{ secrets.GH_TOKEN }}
+      BHOM_APP_ID:         ${{ secrets.BHOM_APP_ID }}
+      BHOM_APP_PRIVATE_KEY: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
 
   # ── Health emission ─────────────────────────────────────────────────────────
-  # Runs unconditionally after all child jobs (including failures and skips).
-  # Delegates to ci-emit-health.yml; continue-on-error ensures a telemetry failure
-  # never blocks required status checks.
+  # always() ensures this runs regardless of child job outcomes; continue-on-error
+  # in ci-emit-health.yml prevents telemetry failures from blocking required checks.
   emit-health:
     needs: [setup, format, compliance, dataset, build, unit-tests]
-    if: always() && needs.setup.result != 'skipped'
+    if: always() && needs.setup.result != 'skipped' && needs.setup.outputs.state != ''
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-emit-health.yml@main  # MIGRATE-TO-PROD: update org when moving to production
     with:
       maturity:          ${{ needs.setup.outputs.state }}
@@ -225,4 +310,6 @@ jobs:
       dataset_result:    ${{ needs.dataset.result }}
       build_result:      ${{ needs.build.result }}
       unit_tests_result: ${{ needs['unit-tests'].result }}
-    secrets: inherit
+    secrets:
+      BHOM_APP_ID:         ${{ secrets.BHOM_APP_ID }}
+      BHOM_APP_PRIVATE_KEY: ${{ secrets.BHOM_APP_PRIVATE_KEY }}
