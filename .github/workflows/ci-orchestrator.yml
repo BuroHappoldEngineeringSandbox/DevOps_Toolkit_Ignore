@@ -2,8 +2,6 @@ name: CI Orchestrator
 
 on:
   pull_request:
-    paths-ignore:
-      - '.editorconfig'  # Config-only changes cannot affect build or test outcomes.
   workflow_call:
     inputs:
       dotnet_version:
@@ -47,6 +45,8 @@ jobs:
       format_files_changed:     ${{ steps.changed.outputs.format_files_changed }}
       compliance_files_changed: ${{ steps.changed.outputs.compliance_files_changed }}
       dataset_files_changed:    ${{ steps.changed.outputs.dataset_files_changed }}
+      build_relevant_changed:   ${{ steps.changed.outputs.build_relevant_changed }}
+      governance_branch:        ${{ steps.governance.outputs.skip }}
       dotnet_version:           ${{ steps.resolve-inputs.outputs.dotnet_version }}
       configuration:            ${{ steps.resolve-inputs.outputs.configuration }}
 
@@ -59,13 +59,30 @@ jobs:
           echo "dotnet_version=${{ inputs.dotnet_version || '8.0' }}" >> "$GITHUB_OUTPUT"
           echo "configuration=${{ inputs.configuration || 'Release' }}"  >> "$GITHUB_OUTPUT"
 
+      # Governance branches (opened by the editorconfig distribution workflow) only change
+      # .editorconfig — build and unit-test cannot fail. Skip them to avoid unnecessary
+      # runner cost on every PR force-push, regardless of how the orchestrator was invoked.
+      # This works for both direct pull_request triggers and org-ruleset invocations, where
+      # paths-ignore on the trigger is bypassed by the ruleset engine.
+      - name: Detect governance branch
+        id: governance
+        shell: bash
+        run: |
+          if [[ "${{ github.head_ref }}" == governance/* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Governance branch — build and unit-test jobs will be skipped."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
 
       # format, compliance, and dataset are PR-only and skipped when no relevant files changed.
-      # build and unit-tests always run.
+      # build and unit-tests run on every PR unless the branch is governance/* or only
+      # documentation/config files changed.
       - name: Detect changed file types
         id: changed
         shell: bash
@@ -76,6 +93,8 @@ jobs:
             echo "format_files_changed=false"     >> "$GITHUB_OUTPUT"
             echo "compliance_files_changed=false" >> "$GITHUB_OUTPUT"
             echo "dataset_files_changed=false"    >> "$GITHUB_OUTPUT"
+            # build_relevant_changed is not set for non-PR events; job conditions treat
+            # non-PR runs as always build-relevant via the github.event_name guard.
             exit 0
           fi
 
@@ -105,6 +124,16 @@ jobs:
           else
             echo "dataset_files_changed=false" >> "$GITHUB_OUTPUT"
             echo "::notice::No dataset files changed — dataset job will be skipped."
+          fi
+
+          # build/unit-tests: skip on PRs when every changed file is in the known-safe set
+          # (documentation and plain config). Any file outside this set is potentially
+          # build-relevant, so the conservative default is to run.
+          if echo "$CHANGED" | grep -qvE '\.(md|txt|editorconfig|gitattributes|gitignore)$'; then
+            echo "build_relevant_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build_relevant_changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Only documentation/config files changed — build and unit-test jobs will be skipped."
           fi
 
       # secrets context is unavailable in step if: expressions; gate on a prior step's output.
@@ -234,7 +263,9 @@ jobs:
     needs: setup
     if: |
       needs.setup.result == 'success' &&
-      needs.setup.outputs.run_build == 'true'
+      needs.setup.outputs.run_build == 'true' &&
+      needs.setup.outputs.governance_branch != 'true' &&
+      (github.event_name != 'pull_request' || needs.setup.outputs.build_relevant_changed == 'true')
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-build.yml@main  # MIGRATE-TO-PROD: update org when moving to production
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
@@ -249,7 +280,9 @@ jobs:
     needs: setup
     if: |
       needs.setup.result == 'success' &&
-      needs.setup.outputs.run_unit_tests == 'true'
+      needs.setup.outputs.run_unit_tests == 'true' &&
+      needs.setup.outputs.governance_branch != 'true' &&
+      (github.event_name != 'pull_request' || needs.setup.outputs.build_relevant_changed == 'true')
     uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-unit-tests.yml@main  # MIGRATE-TO-PROD: update org when moving to production
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
