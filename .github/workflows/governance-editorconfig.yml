@@ -150,7 +150,7 @@ jobs:
             maturity_pattern=$(IFS='|'; echo "${POLICY_STATES[*]}")
             gh api "/orgs/${ORG}/properties/values" \
               --paginate \
-              --jq ".[] | select(any(.properties[]; .property_name == \"maturity\" and (.value | test(\"^(${maturity_pattern})$\")))) | .repository_name" \
+              --jq ".[] | select(any(.properties[]; .property_name == \"maturity\" and (.value != null) and (.value | test(\"^(${maturity_pattern})$\")))) | .repository_name" \
               | tr '[:upper:]' '[:lower:]' \
               | LC_ALL=C sort -u \
               | grep -v "^devops_toolkit$" \
