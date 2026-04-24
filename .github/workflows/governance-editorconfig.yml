@@ -138,14 +138,9 @@ jobs:
             ACTIVE_COUNT=$(wc -l < /tmp/active-repos.txt | tr -d ' ')
             echo "::notice::[${ORG}] ${ACTIVE_COUNT} non-archived repo(s) in org."
 
-            # Fetch all repos with their custom property values in a single call, then
-            # filter client-side to repos with 'maturity' set to a known tier.
-            #
-            # Why not a per-tier loop with repository_query=props.maturity:VALUE?
-            # 'repository_query' is a repo-name text search, not a property value filter.
-            # Every tier returned 404; gh api writes the error JSON body to stdout (not
-            # stderr), so 2>/dev/null did not suppress it. The JSON leaked through the
-            # pipeline into props-repos.txt and poisoned the comm intersection.
+            # Fetch all repos with custom properties in one call and filter client-side.
+            # (repository_query is a name text-search, not a property filter — per-tier API
+            # calls return 404 to stdout, not stderr, poisoning the comm intersection.)
             source .github/scripts/orchestrator/policy-contract.sh
             maturity_pattern=$(IFS='|'; echo "${POLICY_STATES[*]}")
             gh api "/orgs/${ORG}/properties/values" \

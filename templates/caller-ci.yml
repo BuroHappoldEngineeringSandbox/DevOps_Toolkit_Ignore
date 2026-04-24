@@ -11,7 +11,9 @@ name: CI
 on:
   pull_request:
     paths-ignore:
-      - '.editorconfig'  # Config-only changes cannot affect build or test outcomes.
+      - '.editorconfig'  # Applies for direct pull_request triggers only. Under org rulesets
+                         # the engine bypasses paths-ignore; the orchestrator handles this via
+                         # the governance-branch skip inside setup.
   push:
     branches:
       - main
