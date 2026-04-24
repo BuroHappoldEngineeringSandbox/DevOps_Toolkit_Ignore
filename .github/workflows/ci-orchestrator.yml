@@ -61,15 +61,9 @@ jobs:
           echo "dotnet_version=${{ inputs.dotnet_version || '8.0' }}" >> "$GITHUB_OUTPUT"
           echo "configuration=${{ inputs.configuration || 'Release' }}"  >> "$GITHUB_OUTPUT"
 
-      # Two conditions short-circuit all subsequent setup work by setting skip=true:
-      # 1. Governance branches (governance/*): only .editorconfig changes, no build can fail.
-      # 2. DevOps_Toolkit self-execution: the orchestrator must declare on: pull_request to
-      #    satisfy GitHub's ruleset required-workflow constraint, which causes it to fire on
-      #    its own repo's PRs. DevOps_Toolkit is an infrastructure repo, not a governed
-      #    code repo, so there is nothing to validate here.
-      # In both cases all downstream step outputs remain empty, which naturally suppresses
-      # every child job (empty string != 'true') and prevents emit-health from firing on
-      # an empty maturity value.
+      # Short-circuits setup for two stable categories where CI adds no value:
+      # governance/* branches (only .editorconfig changes) and DevOps_Toolkit's own PRs
+      # (infrastructure repo, not governed code). Empty outputs suppress all child jobs.
       - name: Detect skip conditions
         id: governance
         shell: bash
@@ -90,8 +84,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      # format, compliance, and dataset are PR-only and skipped when no relevant files changed.
-      # build and unit-tests run on every PR unless only documentation/config files changed.
       - name: Detect changed file types
         if: steps.governance.outputs.skip != 'true'
         id: changed
@@ -136,9 +128,9 @@ jobs:
             echo "::notice::No dataset files changed — dataset job will be skipped."
           fi
 
-          # build/unit-tests: skip on PRs when every changed file is in the known-safe set
-          # (documentation and plain config). Any file outside this set is potentially
-          # build-relevant, so the conservative default is to run.
+          # build/unit-tests: conservative denylist — skip only when ALL changes are in the
+          # known-safe set. Intentionally asymmetric with format/compliance (allowlist-based):
+          # the cost of a missed build failure outweighs a false-positive build run.
           if echo "$CHANGED" | grep -qvE '\.(md|txt|editorconfig|gitattributes|gitignore)$'; then
             echo "build_relevant_changed=true" >> "$GITHUB_OUTPUT"
           else
@@ -183,7 +175,11 @@ jobs:
           STATE=$(gh api "repos/${{ github.repository }}/properties/values" \
             --jq '.[] | select(.property_name == "maturity") | .value // empty')
           if [ -z "$STATE" ]; then
-            echo "::error::Repository custom property 'maturity' is not set. Set it to one of: $(IFS=" | "; echo "${POLICY_STATES[*]:-prototype | alpha | beta}")."
+            if [[ "${{ github.event.pull_request.head.repo.fork }}" == "true" ]]; then
+              echo "::error::Fork PR: GITHUB_TOKEN cannot read custom properties from the upstream repository. Configure BHOM_APP_ID (App must be installed in the upstream org), or set 'maturity' on the fork itself. See README.md."
+            else
+              echo "::error::Repository custom property 'maturity' is not set. Set it to one of: $(IFS=" | "; echo "${POLICY_STATES[*]:-prototype | alpha | beta}")."
+            fi
             exit 1
           fi
           # Value validation is deferred to 'Validate repo maturity' below (post-checkout).
@@ -239,7 +235,7 @@ jobs:
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_format == 'true' &&
       needs.setup.outputs.format_files_changed == 'true'
-    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-format.yml@main  # MIGRATE-TO-PROD: update org when moving to production
+    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-format.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
     # ci-format.yml declares no secrets; GITHUB_TOKEN is sufficient (public checkouts only).
@@ -250,7 +246,7 @@ jobs:
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_compliance == 'true' &&
       needs.setup.outputs.compliance_files_changed == 'true'
-    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-compliance.yml@main  # MIGRATE-TO-PROD: update org when moving to production
+    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-compliance.yml@main
     with:
       dotnet_version:    ${{ needs.setup.outputs.dotnet_version }}
       configuration:     ${{ needs.setup.outputs.configuration }}
@@ -266,7 +262,7 @@ jobs:
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_dataset == 'true' &&
       needs.setup.outputs.dataset_files_changed == 'true'
-    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-dataset.yml@main  # MIGRATE-TO-PROD: update org when moving to production
+    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-dataset.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
@@ -281,7 +277,7 @@ jobs:
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_build == 'true' &&
       (github.event_name != 'pull_request' || needs.setup.outputs.build_relevant_changed == 'true')
-    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-build.yml@main  # MIGRATE-TO-PROD: update org when moving to production
+    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-build.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
@@ -297,7 +293,7 @@ jobs:
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_unit_tests == 'true' &&
       (github.event_name != 'pull_request' || needs.setup.outputs.build_relevant_changed == 'true')
-    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-unit-tests.yml@main  # MIGRATE-TO-PROD: update org when moving to production
+    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-unit-tests.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
@@ -312,7 +308,7 @@ jobs:
   emit-health:
     needs: [setup, format, compliance, dataset, build, unit-tests]
     if: always() && needs.setup.result != 'skipped' && needs.setup.outputs.state != ''
-    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-emit-health.yml@main  # MIGRATE-TO-PROD: update org when moving to production
+    uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/workflows/ci-emit-health.yml@main
     with:
       maturity:          ${{ needs.setup.outputs.state }}
       format_result:     ${{ needs.format.result }}
