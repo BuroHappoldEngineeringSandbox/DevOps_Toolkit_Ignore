@@ -71,7 +71,7 @@ jobs:
           if [[ "${{ github.head_ref }}" == governance/* ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Governance branch — all CI jobs will be skipped."
-          elif [[ "${{ github.repository }}" == */Platform ]]; then
+          elif [[ "${{ github.repository }}" == "BuroHappoldEngineeringSandbox/Platform" ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Platform self-execution — all CI jobs will be skipped."
           else
@@ -185,12 +185,13 @@ jobs:
           # Value validation is deferred to 'Validate repo maturity' below (post-checkout).
           echo "state=$STATE" >> "$GITHUB_OUTPUT"
 
-      # Same org default token can read this repo; pass GH_TOKEN if the toolkit is private elsewhere.
+      # Always checked out from the canonical admin-org repo so the correct policy.json and
+      # scripts are present regardless of which org triggered this run (proxy pattern).
       - name: Checkout policy (Platform)
         if: steps.governance.outputs.skip != 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          repository: ${{ github.repository_owner }}/Platform
+          repository: BuroHappoldEngineeringSandbox/Platform
           ref: main
           path: _central
           token: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
