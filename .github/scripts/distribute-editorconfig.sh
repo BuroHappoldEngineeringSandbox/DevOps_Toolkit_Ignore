@@ -124,7 +124,7 @@ while IFS= read -r repo; do
         --head "$BRANCH" \
         --base "$BASE_BRANCH" \
         --title "chore: update .editorconfig" \
-        --body "Automated update of \`.editorconfig\` from [Platform](https://github.com/BuroHappoldEngineeringAdmin/Platform/blob/main/.editorconfig).
+        --body "Automated update of \`.editorconfig\` from [Platform](https://github.com/BuroHappoldEngineeringSandbox/Platform/blob/main/.editorconfig).
 
 Formatting rules are managed centrally in Platform. This PR was opened automatically.
 

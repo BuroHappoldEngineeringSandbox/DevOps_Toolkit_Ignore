@@ -235,7 +235,7 @@ jobs:
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_format == 'true' &&
       needs.setup.outputs.format_files_changed == 'true'
-    uses: BuroHappoldEngineeringAdmin/Platform/.github/workflows/ci-format.yml@main
+    uses: BuroHappoldEngineeringSandbox/Platform/.github/workflows/ci-format.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
     # ci-format.yml declares no secrets; GITHUB_TOKEN is sufficient (public checkouts only).
@@ -246,7 +246,7 @@ jobs:
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_compliance == 'true' &&
       needs.setup.outputs.compliance_files_changed == 'true'
-    uses: BuroHappoldEngineeringAdmin/Platform/.github/workflows/ci-compliance.yml@main
+    uses: BuroHappoldEngineeringSandbox/Platform/.github/workflows/ci-compliance.yml@main
     with:
       dotnet_version:    ${{ needs.setup.outputs.dotnet_version }}
       configuration:     ${{ needs.setup.outputs.configuration }}
@@ -262,7 +262,7 @@ jobs:
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_dataset == 'true' &&
       needs.setup.outputs.dataset_files_changed == 'true'
-    uses: BuroHappoldEngineeringAdmin/Platform/.github/workflows/ci-dataset.yml@main
+    uses: BuroHappoldEngineeringSandbox/Platform/.github/workflows/ci-dataset.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
@@ -277,7 +277,7 @@ jobs:
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_build == 'true' &&
       (github.event_name != 'pull_request' || needs.setup.outputs.build_relevant_changed == 'true')
-    uses: BuroHappoldEngineeringAdmin/Platform/.github/workflows/ci-build.yml@main
+    uses: BuroHappoldEngineeringSandbox/Platform/.github/workflows/ci-build.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
@@ -293,7 +293,7 @@ jobs:
       needs.setup.result == 'success' &&
       needs.setup.outputs.run_unit_tests == 'true' &&
       (github.event_name != 'pull_request' || needs.setup.outputs.build_relevant_changed == 'true')
-    uses: BuroHappoldEngineeringAdmin/Platform/.github/workflows/ci-unit-tests.yml@main
+    uses: BuroHappoldEngineeringSandbox/Platform/.github/workflows/ci-unit-tests.yml@main
     with:
       dotnet_version: ${{ needs.setup.outputs.dotnet_version }}
       configuration:  ${{ needs.setup.outputs.configuration }}
@@ -308,7 +308,7 @@ jobs:
   emit-health:
     needs: [setup, format, compliance, dataset, build, unit-tests]
     if: always() && needs.setup.result != 'skipped' && needs.setup.outputs.state != ''
-    uses: BuroHappoldEngineeringAdmin/Platform/.github/workflows/ci-emit-health.yml@main
+    uses: BuroHappoldEngineeringSandbox/Platform/.github/workflows/ci-emit-health.yml@main
     with:
       maturity:          ${{ needs.setup.outputs.state }}
       format_result:     ${{ needs.format.result }}

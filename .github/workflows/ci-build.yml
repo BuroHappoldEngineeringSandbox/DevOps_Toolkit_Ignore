@@ -60,7 +60,7 @@ jobs:
           owner: ${{ github.repository_owner }}
 
       - name: Resolve dependencies
-        uses: BuroHappoldEngineeringAdmin/Platform/.github/actions/resolve-dependencies@main
+        uses: BuroHappoldEngineeringSandbox/Platform/.github/actions/resolve-dependencies@main
         with:
           mode: caller
           dotnet_version: ${{ inputs.dotnet_version }}

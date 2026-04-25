@@ -93,7 +93,7 @@ jobs:
 
       - name: Resolve dependencies (Test_Toolkit graph)
         if: steps.changed.outputs.count != '0'
-        uses: BuroHappoldEngineeringAdmin/Platform/.github/actions/resolve-dependencies@main
+        uses: BuroHappoldEngineeringSandbox/Platform/.github/actions/resolve-dependencies@main
         with:
           mode:           seeds
           seeds:          BHoM/Test_Toolkit
@@ -104,7 +104,7 @@ jobs:
       - name: Prepare DatasetComplianceRunner
         if: steps.changed.outputs.count != '0'
         id: runner
-        uses: BuroHappoldEngineeringAdmin/Platform/.github/actions/prepare-runner@main
+        uses: BuroHappoldEngineeringSandbox/Platform/.github/actions/prepare-runner@main
         with:
           runner_project: tools/ComplianceRunner/src/DatasetComplianceRunner/DatasetComplianceRunner.csproj
           output_dir:     out\dataset-runner

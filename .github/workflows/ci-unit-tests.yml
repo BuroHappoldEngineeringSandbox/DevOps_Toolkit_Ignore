@@ -82,7 +82,7 @@ jobs:
 
       - name: Resolve dependencies
         if: steps.test_check.outputs.found == 'true'
-        uses: BuroHappoldEngineeringAdmin/Platform/.github/actions/resolve-dependencies@main
+        uses: BuroHappoldEngineeringSandbox/Platform/.github/actions/resolve-dependencies@main
         with:
           mode:             caller
           additional_seeds: BHoM/Test_Toolkit
