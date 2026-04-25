@@ -185,12 +185,13 @@ jobs:
           # Value validation is deferred to 'Validate repo maturity' below (post-checkout).
           echo "state=$STATE" >> "$GITHUB_OUTPUT"
 
-      # Same org default token can read this repo; pass GH_TOKEN if the toolkit is private elsewhere.
+      # Always checked out from the canonical admin-org repo so the correct policy.json and
+      # scripts are present regardless of which org triggered this run (proxy pattern).
       - name: Checkout policy (Platform)
         if: steps.governance.outputs.skip != 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          repository: ${{ github.repository_owner }}/Platform
+          repository: BuroHappoldEngineeringAdmin/Platform
           ref: main
           path: _central
           token: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
