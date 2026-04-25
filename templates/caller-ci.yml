@@ -1,6 +1,6 @@
 # Template: copy this file to .github/workflows/ci.yml in your repository.
 #
-# Calls the DevOps_Toolkit CI orchestrator, which runs format checking,
+# Calls the Platform CI orchestrator, which runs format checking,
 # compliance analysis, dataset validation, build, and unit tests according
 # to your repository's maturity level (prototype | alpha | beta).
 #
@@ -27,8 +27,8 @@ concurrency:
 
 jobs:
   ci:
-    # Replace the org below with the org that hosts your DevOps_Toolkit instance.
-    uses: YOUR_ORG/DevOps_Toolkit/.github/workflows/ci-orchestrator.yml@main
+    # Replace the org below with the org that hosts your Platform instance.
+    uses: YOUR_ORG/Platform/.github/workflows/ci-orchestrator.yml@main
     secrets:
       BHOM_APP_ID:          ${{ secrets.BHOM_APP_ID }}
       BHOM_APP_PRIVATE_KEY: ${{ secrets.BHOM_APP_PRIVATE_KEY }}

@@ -45,7 +45,7 @@ jobs:
       orgs: ${{ steps.resolve-orgs.outputs.orgs }}
 
     steps:
-      - name: Checkout DevOps_Toolkit
+      - name: Checkout Platform
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
@@ -77,14 +77,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50  # App token TTL is 60 min; cap job below that to avoid late-run 401s.
     permissions:
-      contents: read  # DevOps_Toolkit checkout only; target repo writes use app token.
+      contents: read  # Platform checkout only; target repo writes use app token.
     strategy:
       matrix:
         org: ${{ fromJson(needs.setup.outputs.orgs) }}
       fail-fast: false  # One org's failure does not cancel distribution to other orgs.
 
     steps:
-      - name: Checkout DevOps_Toolkit
+      - name: Checkout Platform
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
@@ -148,7 +148,7 @@ jobs:
               --jq ".[] | select(any(.properties[]; .property_name == \"maturity\" and (.value != null) and (.value | test(\"^(${maturity_pattern})$\")))) | .repository_name" \
               | tr '[:upper:]' '[:lower:]' \
               | LC_ALL=C sort -u \
-              | grep -v "^devops_toolkit$" \
+              | grep -v "^platform$" \
               > /tmp/props-repos.txt
 
             PROPS_COUNT=$(wc -l < /tmp/props-repos.txt | tr -d ' ')
