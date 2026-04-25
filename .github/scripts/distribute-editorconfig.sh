@@ -97,7 +97,7 @@ while IFS= read -r repo; do
     git checkout -b "$BRANCH"
     cp "$CANONICAL_ABS" .editorconfig
     git add .editorconfig
-    git commit -m "chore: update .editorconfig from DevOps_Toolkit"
+    git commit -m "chore: update .editorconfig from Platform"
 
     # --force is safe: this branch is exclusively owned by this workflow.
     git push origin "$BRANCH" --force
@@ -124,9 +124,9 @@ while IFS= read -r repo; do
         --head "$BRANCH" \
         --base "$BASE_BRANCH" \
         --title "chore: update .editorconfig" \
-        --body "Automated update of \`.editorconfig\` from [DevOps_Toolkit](https://github.com/${ORG}/DevOps_Toolkit/blob/main/.editorconfig).
+        --body "Automated update of \`.editorconfig\` from [Platform](https://github.com/BuroHappoldEngineeringSandbox/Platform/blob/main/.editorconfig).
 
-Formatting rules are managed centrally in DevOps_Toolkit. This PR was opened automatically.
+Formatting rules are managed centrally in Platform. This PR was opened automatically.
 
 To fix formatting issues locally before opening a PR:
 \`\`\`bash

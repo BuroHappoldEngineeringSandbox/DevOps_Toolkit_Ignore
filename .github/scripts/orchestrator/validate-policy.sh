@@ -5,7 +5,7 @@ set -euo pipefail
 POLICY="${POLICY_PATH:-_central/policy.json}"
 
 if [ ! -f "$POLICY" ]; then
-  echo "::error::policy.json not found at repo root of the policy checkout (DevOps_Toolkit)."
+  echo "::error::policy.json not found at repo root of the policy checkout (Platform)."
   exit 1
 fi
 

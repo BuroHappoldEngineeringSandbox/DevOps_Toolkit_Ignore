@@ -19,12 +19,12 @@ internal static class RunnerFixture
         var dir = new DirectoryInfo(
             Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!);
 
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "DevOps_Toolkit.slnx")))
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Platform.slnx")))
             dir = dir.Parent;
 
         return dir?.FullName
             ?? throw new InvalidOperationException(
-                "Cannot locate repo root — DevOps_Toolkit.slnx not found in any ancestor directory.");
+                "Cannot locate repo root — Platform.slnx not found in any ancestor directory.");
     }
 
     /// <summary>

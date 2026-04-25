@@ -82,7 +82,7 @@ jobs:
 
       - name: Resolve dependencies
         if: steps.test_check.outputs.found == 'true'
-        uses: BuroHappoldEngineeringSandbox/DevOps_Toolkit/.github/actions/resolve-dependencies@main  # MIGRATE-TO-PROD: update org when moving to production
+        uses: BuroHappoldEngineeringSandbox/Platform/.github/actions/resolve-dependencies@main
         with:
           mode:             caller
           additional_seeds: BHoM/Test_Toolkit
