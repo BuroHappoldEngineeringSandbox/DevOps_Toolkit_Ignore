@@ -71,7 +71,7 @@ jobs:
           if [[ "${{ github.head_ref }}" == governance/* ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Governance branch — all CI jobs will be skipped."
-          elif [[ "${{ github.repository }}" == */Platform ]]; then
+          elif [[ "${{ github.repository }}" == "BuroHappoldEngineeringSandbox/Platform" ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Platform self-execution — all CI jobs will be skipped."
           else
@@ -191,7 +191,7 @@ jobs:
         if: steps.governance.outputs.skip != 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          repository: BuroHappoldEngineeringAdmin/Platform
+          repository: BuroHappoldEngineeringSandbox/Platform
           ref: main
           path: _central
           token: ${{ steps.dep-token.outputs.token || secrets.GH_TOKEN || github.token }}
