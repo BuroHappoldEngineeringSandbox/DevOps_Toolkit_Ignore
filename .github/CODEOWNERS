@@ -1,0 +1,5 @@
+# This file is managed by github-governance. Do not edit manually.
+# Source: orgs/BuroHappoldEngineeringSandbox/codeowners.yml
+
+* @BuroHappoldEngineeringSandbox/governance-smoke-test
+.github/ @BuroHappoldEngineeringSandbox/bim
